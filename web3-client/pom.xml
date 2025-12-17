@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.superedison</groupId>
         <artifactId>java-wallet-sdk</artifactId>
-        <version>0.0.1</version>
+        <version>0.0.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -40,6 +40,21 @@
         <dependency>
             <groupId>io.github.superedison</groupId>
             <artifactId>web3-chain-evm</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-chain-btc</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-chain-tron</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-chain-solana</artifactId>
             <version>${project.version}</version>
         </dependency>
 

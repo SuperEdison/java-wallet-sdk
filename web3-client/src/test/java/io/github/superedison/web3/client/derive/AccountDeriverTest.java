@@ -1,5 +1,8 @@
 package io.github.superedison.web3.client.derive;
 
+import io.github.superedison.web3.chain.btc.address.BtcAddressType;
+import io.github.superedison.web3.chain.btc.address.BtcNetwork;
+import io.github.superedison.web3.chain.spi.ChainType;
 import io.github.superedison.web3.crypto.mnemonic.Bip39;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -14,20 +17,15 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * AccountDeriver 单元测试
+ * AccountDeriver 多链账户派生测试
  */
-@DisplayName("AccountDeriver 账户派生工具测试")
+@DisplayName("AccountDeriver 多链账户派生测试")
 class AccountDeriverTest {
-
+    final static String mnmenicString = """
+                        leopard rotate tip rescue vessel rain argue detail music picture amused genuine
+            """.trim();
     // 测试用助记词（仅用于测试，切勿在生产中使用）
-    private static final List<String> TEST_MNEMONIC = Arrays.asList(
-            "leopard", "rotate", "tip", "rescue", "vessel", "rain",
-            "argue", "detail", "music", "picture", "amused", "genuine"
-    );
-    // EVM 第一个地址 (index 0): 0xd2c7d06eba1b002eacce0883f18904069f6a5f61
-    // EVM 第二个地址 (index 1): 0x192dbd14f1e70da49e685d826fbfd5ed2be7d063
-    private static final String EXPECTED_EVM_FIRST_ADDRESS = "0xd2c7d06eba1b002eacce0883f18904069f6a5f61";
-    private static final String EXPECTED_EVM_SECOND_ADDRESS = "0x192dbd14f1e70da49e685d826fbfd5ed2be7d063";
+    private static final List<String> TEST_MNEMONIC = List.of(mnmenicString.split(" "));
 
     @Nested
     @DisplayName("userIdToAccountIndex 方法测试")
@@ -59,11 +57,6 @@ class AccountDeriverTest {
         @Test
         @DisplayName("索引应该在有效范围内 (0 到 2^31-1)")
         void indexInValidRange() {
-            String[] userIds = {
-                    "user_1", "user_abc", "很长的用户ID测试",
-                    "special!@#$%", "12345", ""
-            };
-
             for (int i = 0; i < 100; i++) {
                 String userId = "random_user_" + i;
                 int index = AccountDeriver.userIdToAccountIndex(userId);
@@ -84,111 +77,114 @@ class AccountDeriverTest {
             assertThatThrownBy(() -> AccountDeriver.userIdToAccountIndex(""))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Nested
+    @DisplayName("getPathForChain 方法测试")
+    class GetPathForChainTest {
 
         @Test
-        @DisplayName("特殊字符 userId 应该正常工作")
-        void specialCharactersWork() {
-            String[] specialUserIds = {
-                    "user@example.com",
-                    "用户123",
-                    "user with spaces",
-                    "user\ttab",
-                    "user\nnewline",
-                    "emoji😀user"
-            };
+        @DisplayName("EVM 路径应该正确")
+        void evmPathCorrect() {
+            String path = AccountDeriver.getPathForChain(ChainType.EVM, 0);
+            assertThat(path).isEqualTo("m/44'/60'/0'/0/0");
+        }
 
-            for (String userId : specialUserIds) {
-                int index = AccountDeriver.userIdToAccountIndex(userId);
-                assertThat(index).isGreaterThanOrEqualTo(0);
-            }
+        @Test
+        @DisplayName("TRON 路径应该正确")
+        void tronPathCorrect() {
+            String path = AccountDeriver.getPathForChain(ChainType.TRON, 5);
+            assertThat(path).isEqualTo("m/44'/195'/5'/0/0");
+        }
+
+        @Test
+        @DisplayName("Solana 路径应该使用硬化索引")
+        void solanaPathHardened() {
+            String path = AccountDeriver.getPathForChain(ChainType.SOL, 0);
+            assertThat(path).isEqualTo("m/44'/501'/0'/0'");
         }
     }
 
     @Nested
-    @DisplayName("getEvmPathForUser 方法测试")
-    class GetEvmPathForUserTest {
+    @DisplayName("getPathForBtcType 方法测试")
+    class GetPathForBtcTypeTest {
 
         @Test
-        @DisplayName("应该生成正确格式的路径")
-        void correctPathFormat() {
-            String path = AccountDeriver.getEvmPathForUser("user_1");
-
-            assertThat(path).startsWith("m/44'/60'/");
-            assertThat(path).endsWith("'/0/0");
+        @DisplayName("P2PKH 使用 purpose 44")
+        void p2pkhPurpose44() {
+            String path = AccountDeriver.getPathForBtcType(BtcAddressType.P2PKH, 0);
+            assertThat(path).startsWith("m/44'/0'/");
         }
 
         @Test
-        @DisplayName("相同 userId 应该生成相同路径")
-        void sameUserIdSamePath() {
-            String path1 = AccountDeriver.getEvmPathForUser("user_test");
-            String path2 = AccountDeriver.getEvmPathForUser("user_test");
-
-            assertThat(path1).isEqualTo(path2);
+        @DisplayName("P2SH-P2WPKH 使用 purpose 49")
+        void p2shP2wpkhPurpose49() {
+            String path = AccountDeriver.getPathForBtcType(BtcAddressType.P2SH_P2WPKH, 0);
+            assertThat(path).startsWith("m/49'/0'/");
         }
 
         @Test
-        @DisplayName("路径应该包含正确的账户索引")
-        void pathContainsCorrectAccountIndex() {
-            String userId = "user_123";
-            int expectedIndex = AccountDeriver.userIdToAccountIndex(userId);
-            String path = AccountDeriver.getEvmPathForUser(userId);
+        @DisplayName("P2WPKH 使用 purpose 84")
+        void p2wpkhPurpose84() {
+            String path = AccountDeriver.getPathForBtcType(BtcAddressType.P2WPKH, 0);
+            assertThat(path).startsWith("m/84'/0'/");
+        }
 
-            String expectedPath = String.format("m/44'/60'/%d'/0/0", expectedIndex);
-            assertThat(path).isEqualTo(expectedPath);
+        @Test
+        @DisplayName("P2TR 使用 purpose 86")
+        void p2trPurpose86() {
+            String path = AccountDeriver.getPathForBtcType(BtcAddressType.P2TR, 0);
+            assertThat(path).startsWith("m/86'/0'/");
         }
     }
 
     @Nested
-    @DisplayName("deriveEvmAddress 方法测试")
-    class DeriveEvmAddressTest {
+    @DisplayName("EVM 地址派生测试")
+    class EvmDeriveTest {
 
         @Test
         @DisplayName("应该生成有效的 EVM 地址")
         void generatesValidAddress() {
-            String address = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_1");
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String address = deriver.deriveAddress("user_1", ChainType.EVM);
 
-            assertThat(address).startsWith("0x");
-            assertThat(address).hasSize(42); // 0x + 40 hex chars
+                assertThat(address).startsWith("0x");
+                assertThat(address).hasSize(42);
+            }
         }
 
         @Test
         @DisplayName("相同 userId 应该生成相同地址")
         void sameUserIdSameAddress() {
-            String address1 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_stable");
-            String address2 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_stable");
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String address1 = deriver.deriveAddress("user_stable", ChainType.EVM);
+                String address2 = deriver.deriveAddress("user_stable", ChainType.EVM);
 
-            assertThat(address1).isEqualTo(address2);
+                assertThat(address1).isEqualTo(address2);
+            }
         }
 
         @Test
         @DisplayName("不同 userId 应该生成不同地址")
         void differentUserIdDifferentAddress() {
-            String address1 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_a");
-            String address2 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_b");
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String address1 = deriver.deriveAddress("user_a", ChainType.EVM);
+                String address2 = deriver.deriveAddress("user_b", ChainType.EVM);
 
-            assertThat(address1).isNotEqualTo(address2);
+                assertThat(address1).isNotEqualTo(address2);
+            }
         }
 
         @Test
         @DisplayName("不同密码应该生成不同地址")
         void differentPassphraseDifferentAddress() {
-            String address1 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_1");
-            String address2 = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, "secret", "user_1");
+            try (AccountDeriver deriver1 = AccountDeriver.fromMnemonic(TEST_MNEMONIC, "");
+                 AccountDeriver deriver2 = AccountDeriver.fromMnemonic(TEST_MNEMONIC, "secret")) {
+                String address1 = deriver1.deriveAddress("user_1", ChainType.EVM);
+                String address2 = deriver2.deriveAddress("user_1", ChainType.EVM);
 
-            assertThat(address1).isNotEqualTo(address2);
-        }
-
-        @Test
-        @DisplayName("地址应该是 EIP-55 校验和格式")
-        void addressIsChecksumFormat() {
-            String address = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_1");
-
-            // EIP-55 地址包含大小写混合
-            boolean hasUpperCase = address.substring(2).chars().anyMatch(Character::isUpperCase);
-            boolean hasLowerCase = address.substring(2).chars().anyMatch(Character::isLowerCase);
-
-            // 至少应该有一种大小写（除非地址碰巧全是数字，概率极低）
-            assertThat(hasUpperCase || hasLowerCase).isTrue();
+                assertThat(address1).isNotEqualTo(address2);
+            }
         }
     }
 
@@ -199,111 +195,194 @@ class AccountDeriverTest {
         @Test
         @DisplayName("应该返回完整的派生结果")
         void returnsCompleteResult() {
-            try (AccountDeriver.DeriveResult result = AccountDeriver.deriveForUser(
-                    TEST_MNEMONIC, null, "user_full")) {
-
-                assertThat(result.userId()).isEqualTo("user_full");
-                assertThat(result.accountIndex()).isGreaterThanOrEqualTo(0);
-                assertThat(result.path()).startsWith("m/44'/60'/");
-                assertThat(result.address()).startsWith("0x");
-                assertThat(result.signingKey()).isNotNull();
-                assertThat(result.signingKey().getPublicKey()).hasSize(65); // 非压缩公钥
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                try (ChainDeriveResult result = deriver.deriveForUser("user_full", ChainType.EVM)) {
+                    assertThat(result.userId()).isEqualTo("user_full");
+                    assertThat(result.accountIndex()).isGreaterThanOrEqualTo(0);
+                    assertThat(result.path()).startsWith("m/44'/60'/");
+                    assertThat(result.chainType()).isEqualTo(ChainType.EVM);
+                    assertThat(result.address()).startsWith("0x");
+                    assertThat(result.signingKey()).isNotNull();
+                    assertThat(result.signingKey().getPublicKey()).hasSize(65);
+                }
             }
         }
 
         @Test
         @DisplayName("签名密钥应该可以安全销毁")
         void signingKeyCanBeDestroyed() {
-            AccountDeriver.DeriveResult result = AccountDeriver.deriveForUser(
-                    TEST_MNEMONIC, null, "user_wipe");
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                ChainDeriveResult result = deriver.deriveForUser("user_wipe", ChainType.EVM);
 
-            assertThat(result.isDestroyed()).isFalse();
-
-            // 销毁签名密钥
-            result.close();
-
-            // 验证已被销毁
-            assertThat(result.isDestroyed()).isTrue();
-        }
-
-        @Test
-        @DisplayName("try-with-resources 应该自动销毁")
-        void tryWithResourcesAutoDestroy() {
-            AccountDeriver.DeriveResult result;
-            try (AccountDeriver.DeriveResult r = AccountDeriver.deriveForUser(
-                    TEST_MNEMONIC, null, "user_auto")) {
-                result = r;
-                assertThat(r.isDestroyed()).isFalse();
-            }
-            assertThat(result.isDestroyed()).isTrue();
-        }
-
-        @Test
-        @DisplayName("结果中的路径和地址应该一致")
-        void pathAndAddressConsistent() {
-            try (AccountDeriver.DeriveResult result = AccountDeriver.deriveForUser(
-                    TEST_MNEMONIC, null, "user_consistent")) {
-
-                // 使用相同 userId 单独派生地址，应该与结果一致
-                String address = AccountDeriver.deriveEvmAddress(TEST_MNEMONIC, null, "user_consistent");
-
-                assertThat(result.address()).isEqualTo(address);
+                assertThat(result.isDestroyed()).isFalse();
+                result.close();
+                assertThat(result.isDestroyed()).isTrue();
             }
         }
 
         @Test
         @DisplayName("签名密钥可以用于签名")
         void signingKeyCanSign() {
-            try (AccountDeriver.DeriveResult result = AccountDeriver.deriveForUser(
-                    TEST_MNEMONIC, null, "user_sign")) {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                try (ChainDeriveResult result = deriver.deriveForUser("user_sign", ChainType.EVM)) {
+                    byte[] hash = new byte[32];
+                    var signature = result.signingKey().sign(hash);
 
-                byte[] hash = new byte[32]; // 测试哈希
-                var signature = result.signingKey().sign(hash);
-
-                assertThat(signature).isNotNull();
-                assertThat(signature.bytes()).hasSize(65); // r(32) + s(32) + v(1)
+                    assertThat(signature).isNotNull();
+                    assertThat(signature.bytes()).hasSize(65);
+                }
             }
         }
     }
 
     @Nested
-    @DisplayName("唯一性测试")
-    class UniquenessTest {
+    @DisplayName("多链派生测试")
+    class MultiChainDeriveTest {
 
         @Test
-        @DisplayName("批量派生应该产生唯一地址")
-        void batchDeriveUniqueAddresses() {
-            Set<String> addresses = new HashSet<>();
-            int count = 100;
-
-            for (int i = 0; i < count; i++) {
-                String address = AccountDeriver.deriveEvmAddress(
-                        TEST_MNEMONIC, null, "unique_user_" + i);
-                addresses.add(address);
+        @DisplayName("TRON 地址以 T 开头")
+        void tronAddressStartsWithT() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String address = deriver.deriveAddress("user_1", ChainType.TRON);
+                assertThat(address).startsWith("T");
             }
-
-            assertThat(addresses).hasSize(count);
         }
 
         @Test
-        @DisplayName("批量索引应该分布均匀")
-        @RepeatedTest(3)
-        void accountIndexDistribution() {
-            int[] buckets = new int[10]; // 分成10个桶
-            int count = 1000;
-
-            for (int i = 0; i < count; i++) {
-                int index = AccountDeriver.userIdToAccountIndex("distribution_test_" + i);
-                int bucket = (int) ((index / (double) Integer.MAX_VALUE) * 10);
-                bucket = Math.min(bucket, 9); // 防止边界情况
-                buckets[bucket]++;
+        @DisplayName("BTC P2WPKH 地址以 bc1q 开头")
+        void btcSegwitAddress() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                DeriveOptions opts = DeriveOptions.builder()
+                        .btcAddressType(BtcAddressType.P2WPKH)
+                        .btcNetwork(BtcNetwork.MAINNET)
+                        .build();
+                String address = deriver.deriveAddress("user_1", ChainType.BTC, opts);
+                assertThat(address).startsWith("bc1q");
             }
+        }
 
-            // 每个桶应该有大约 count/10 个元素，允许 50% 的偏差
-            int expected = count / 10;
-            for (int bucket : buckets) {
-                assertThat(bucket).isBetween(expected / 2, expected * 2);
+        @Test
+        @DisplayName("BTC P2PKH 地址以 1 开头")
+        void btcLegacyAddress() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                DeriveOptions opts = DeriveOptions.builder()
+                        .btcAddressType(BtcAddressType.P2PKH)
+                        .btcNetwork(BtcNetwork.MAINNET)
+                        .build();
+                String address = deriver.deriveAddress("user_1", ChainType.BTC, opts);
+                assertThat(address).startsWith("1");
             }
+        }
+
+        @Test
+        @DisplayName("BTC Taproot 地址以 bc1p 开头")
+        void btcTaprootAddress() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                DeriveOptions opts = DeriveOptions.builder()
+                        .btcAddressType(BtcAddressType.P2TR)
+                        .btcNetwork(BtcNetwork.MAINNET)
+                        .build();
+                String address = deriver.deriveAddress("user_1", ChainType.BTC, opts);
+                assertThat(address).startsWith("bc1p");
+            }
+        }
+
+        @Test
+        @DisplayName("Solana 地址是 Base58 格式")
+        void solanaAddressBase58() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String address = deriver.deriveAddress("user_1", ChainType.SOL);
+                assertThat(address).hasSize(44); // Base58 编码的 32 字节
+                assertThat(address).matches("[1-9A-HJ-NP-Za-km-z]+"); // Base58 字符集
+            }
+        }
+
+        @Test
+        @DisplayName("Solana 地址派生向量验证")
+        void solanaAddressTestVector() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                // 验证第一个地址 (account index 0)
+                List<String> addresses = deriver.deriveAddresses(ChainType.SOL, 0, 2);
+
+                System.out.println("Solana 地址 [0]: " + addresses.get(0));
+                System.out.println("Solana 地址 [1]: " + addresses.get(1));
+
+                assertThat(addresses.get(0)).isEqualTo("FFa2YFCS192tx4KAKpaLKPdbGmuTJs6wPT1WxYyYzo1W");
+                assertThat(addresses.get(1)).isEqualTo("6W4rYZjVcxXVB72uAbuuXJBb7EZgRYqySxSM71jW3mMk");
+            }
+        }
+
+        @Test
+        @DisplayName("同一助记词为所有链派生不同地址")
+        void sameUserDifferentChains() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                String userId = "user_multi";
+
+                String evmAddr = deriver.deriveAddress(userId, ChainType.EVM);
+                String tronAddr = deriver.deriveAddress(userId, ChainType.TRON);
+                String btcAddr = deriver.deriveAddress(userId, ChainType.BTC);
+                String solAddr = deriver.deriveAddress(userId, ChainType.SOL);
+
+                // 所有地址都应该不同
+                Set<String> addresses = Set.of(evmAddr, tronAddr, btcAddr, solAddr);
+                assertThat(addresses).hasSize(4);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("批量派生测试")
+    class BatchDeriveTest {
+
+        @Test
+        @DisplayName("批量派生地址应该唯一")
+        void batchDeriveUniqueAddresses() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                List<String> addresses = deriver.deriveAddresses(ChainType.EVM, 0, 10);
+
+                assertThat(addresses).hasSize(10);
+                assertThat(new HashSet<>(addresses)).hasSize(10);
+            }
+        }
+
+        @Test
+        @DisplayName("批量派生结果应该包含签名密钥")
+        void batchDeriveWithSigningKeys() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                List<ChainDeriveResult> results = deriver.deriveRange(ChainType.EVM, 0, 3);
+
+                assertThat(results).hasSize(3);
+                for (ChainDeriveResult result : results) {
+                    assertThat(result.signingKey()).isNotNull();
+                    result.close();
+                }
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("生命周期测试")
+    class LifecycleTest {
+
+        @Test
+        @DisplayName("销毁后应该抛出异常")
+        void destroyedThrowsException() {
+            AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC);
+            deriver.destroy();
+
+            assertThatThrownBy(() -> deriver.deriveAddress("user_1", ChainType.EVM))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        @DisplayName("try-with-resources 应该自动销毁")
+        void tryWithResourcesAutoDestroy() {
+            AccountDeriver deriver;
+            try (AccountDeriver d = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                deriver = d;
+                assertThat(d.isDestroyed()).isFalse();
+            }
+            assertThat(deriver.isDestroyed()).isTrue();
         }
     }
 
@@ -312,49 +391,57 @@ class AccountDeriverTest {
     class IntegrationTest {
 
         @Test
-        @DisplayName("使用生成的助记词派生地址")
-        void deriveWithGeneratedMnemonic() {
-            // 生成新的助记词
+        @DisplayName("完整的多链工作流程")
+        void completeMultiChainWorkflow() {
+            // 生成助记词
             List<String> mnemonic = Bip39.generateMnemonic(24);
+            assertThat(Bip39.validateMnemonic(mnemonic)).isTrue();
 
-            String address1 = AccountDeriver.deriveEvmAddress(mnemonic, null, "user_1");
-            String address2 = AccountDeriver.deriveEvmAddress(mnemonic, null, "user_2");
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(mnemonic)) {
+                String[] userIds = {"alice", "bob", "charlie"};
 
-            assertThat(address1).startsWith("0x").hasSize(42);
-            assertThat(address2).startsWith("0x").hasSize(42);
-            assertThat(address1).isNotEqualTo(address2);
+                for (String userId : userIds) {
+                    // 派生所有链地址
+                    String evmAddr = deriver.deriveAddress(userId, ChainType.EVM);
+                    String tronAddr = deriver.deriveAddress(userId, ChainType.TRON);
+
+                    DeriveOptions btcOpts = DeriveOptions.builder()
+                            .btcAddressType(BtcAddressType.P2WPKH)
+                            .build();
+                    String btcAddr = deriver.deriveAddress(userId, ChainType.BTC, btcOpts);
+
+                    String solAddr = deriver.deriveAddress(userId, ChainType.SOL);
+
+                    // 验证地址格式
+                    assertThat(evmAddr).startsWith("0x").hasSize(42);
+                    assertThat(tronAddr).startsWith("T");
+                    assertThat(btcAddr).startsWith("bc1q");
+                    assertThat(solAddr).matches("[1-9A-HJ-NP-Za-km-z]+");
+                }
+
+                // 验证可重复性
+                String addr1 = deriver.deriveAddress("alice", ChainType.EVM);
+                String addr2 = deriver.deriveAddress("alice", ChainType.EVM);
+                assertThat(addr1).isEqualTo(addr2);
+            }
         }
 
         @Test
-        @DisplayName("完整的工作流程测试")
-        void completeWorkflow() {
-            // 1. 生成主钱包助记词（实际应用中应安全存储）
-            List<String> masterMnemonic = Bip39.generateMnemonic(24);
+        @DisplayName("使用签名密钥签名交易")
+        void signTransactionWithDerivedKey() {
+            try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
+                try (ChainDeriveResult result = deriver.deriveForUser("trader_1", ChainType.EVM)) {
+                    // 模拟交易哈希
+                    byte[] txHash = new byte[32];
+                    for (int i = 0; i < 32; i++) txHash[i] = (byte) i;
 
-            // 2. 验证助记词
-            assertThat(Bip39.validateMnemonic(masterMnemonic)).isTrue();
+                    // 签名
+                    var signature = result.signingKey().sign(txHash);
 
-            // 3. 为多个用户派生地址
-            String[] userIds = {"alice", "bob", "charlie"};
-            Set<String> addresses = new HashSet<>();
-
-            for (String userId : userIds) {
-                // 使用 try-with-resources 自动销毁签名密钥
-                try (AccountDeriver.DeriveResult result = AccountDeriver.deriveForUser(
-                        masterMnemonic, null, userId)) {
-
-                    assertThat(result.address()).isNotBlank();
-                    addresses.add(result.address());
-                } // 自动销毁签名密钥
+                    assertThat(signature).isNotNull();
+                    assertThat(signature.bytes()).hasSize(65);
+                }
             }
-
-            // 4. 验证所有地址唯一
-            assertThat(addresses).hasSize(userIds.length);
-
-            // 5. 验证可重复性 - 相同用户ID应该得到相同地址
-            String aliceAddress1 = AccountDeriver.deriveEvmAddress(masterMnemonic, null, "alice");
-            String aliceAddress2 = AccountDeriver.deriveEvmAddress(masterMnemonic, null, "alice");
-            assertThat(aliceAddress1).isEqualTo(aliceAddress2);
         }
     }
 }

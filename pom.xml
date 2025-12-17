@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.superedison</groupId>
     <artifactId>java-wallet-sdk</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
     <name>Java Version Web3 Wallet SDK</name>
     <description>Modular web3 wallet SDK for Java: core semantics, crypto primitives, chain adapters, and client
         facade.
@@ -35,6 +35,8 @@
         <module>web3-chain/spi</module>
         <module>web3-chain/evm</module>
         <module>web3-chain/tron</module>
+        <module>web3-chain/btc</module>
+        <module>web3-chain/solana</module>
         <module>web3-client</module>
     </modules>
     <packaging>pom</packaging>
