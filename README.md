@@ -1,81 +1,105 @@
 ## License
 
-MIT licensed.  
-Free to use in wallets, exchanges, SaaS and other commercial products.
+MIT licensed. Free to use in wallets, exchanges, SaaS and other commercial products.
 
-# Web3 Wallet SDK
+# Web3 Wallet SDK (Java 21+)
 
-Java 21+ 的模块化 Web3 钱包 SDK，安全优先，当前实现 EVM 链，提供可扩展的链适配接口与加密原语（BIP-32/39/44、SLIP-0010、Secp256k1、Ed25519）。
+Modular, security-first Web3 wallet SDK. Current focus: EVM + TRON, with an extensible chain SPI and crypto primitives.
 
-## 模块
+## Modules
 
-| 模块 | 说明 |
-|------|------|
-| [`web3-core`](web3-core/README.md) | 钱包、签名、交易等通用接口 |
-| [`web3-crypto`](web3-crypto/README.md) | 哈希/签名/BIP-32/39/44、SLIP-0010、SecureBytes |
-| [`web3-chain`](web3-chain/README.md) | 链抽象层（ChainAdapter/ChainType） |
-| [`web3-chain-evm`](web3-chain-evm/README.md) | EVM 适配器（地址/交易/消息签名/HD 钱包） |
-| [`web-chain-tron`](web-chain-tron/README.md) | TRON 适配器（地址/交易/消息签名/HD 钱包） |
-| [`web3-chain-btc`](web3-chain-btc/README.md) | 预留占位 |
-| [`web3-abi`](web3-abi/README.md) | 预留占位 |
-| [`web3-client`](web3-client/README.md) | 统一入口，适配器注册与账户派生工具 |
+| Module | Description |
+|--------|-------------|
+| web3-core | Semantic/safety abstractions (RawTransaction, SignedTransaction, SigningKey, Address) |
+| web3-crypto | Pure crypto (hash, Secp256k1/Ed25519, BIP-32/39/44, SecureBytes) |
+| web3-chain | Chain abstractions (shared types) |
+| web3-chain-spi | Chain SPI (ChainAdapter, ChainType, encoder/hasher/signer contracts) |
+| web3-chain-evm | EVM implementation (RLP encoding, Keccak hashing, secp256k1 signing) |
+| web3-chain-tron | TRON implementation (Protobuf encoding, SHA256 txid, secp256k1 signing) |
+| web3-client | Entry + adapter registry |
 
-## 模块依赖
-
+Dependency direction (one-way):
 ```
-web3-client ──┬──▶ web3-chain-evm ──▶ web3-chain ──┬──▶ web3-core
-              │                                    │
-              └────────────────────────────────────┴──▶ web3-crypto
+web3-client
+  └─► web3-chain-evm / web3-chain-tron
+          └─► web3-chain-spi ──► web3-core
+                                └─► web3-crypto
 ```
 
-## 快速使用
+## Quickstart (EVM)
 
 ```java
-Web3Client client = Web3Client.builder().autoDiscover().build();
+import io.github.superedison.web3.chain.evm.EvmChainAdapter;
+import io.github.superedison.web3.chain.evm.tx.EvmRawTransaction;
+import io.github.superedison.web3.chain.evm.tx.EvmSignedTransaction;
+import io.github.superedison.web3.chain.spi.ChainAdapter;
+import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
+import java.math.BigInteger;
 
-// 创建 HD 钱包（默认路径 m/44'/60'/0'/0/0）
-HDWallet wallet = client.adapter(ChainType.EVM).createHDWallet(24);
-String from = wallet.getAddress().toString();
-
-// 构造交易
+// 1) Build intent
 EvmRawTransaction tx = EvmRawTransaction.builder()
-    .nonce(1)
-    .gasPrice(BigInteger.valueOf(20_000_000_000L))
-    .gasLimit(21_000)
-    .to("0x742d35Cc6634C0532925a3b844Bc9e7595f8fE7")
-    .value(BigInteger.valueOf(1_000_000_000_000_000_000L))
-    .chainId(1)
-    .build();
+        .nonce(1)
+        .gasPrice(BigInteger.valueOf(20_000_000_000L))
+        .gasLimit(21_000)
+        .to("0x742d35Cc6634C0532925a3b844Bc9e7595f8fE7")
+        .value(BigInteger.valueOf(1_000_000_000_000_000_000L))
+        .chainId(1)
+        .build();
 
-// 签名
-Signature sig = wallet.getSigner().sign(tx.hash());
+// 2) Pick adapter (or use ServiceLoader for auto-discovery)
+ChainAdapter<EvmRawTransaction, EvmSignedTransaction> adapter = new EvmChainAdapter();
+
+// 3) Sign with secp256k1 private key
+byte[] privateKey = /* your 32-byte secp256k1 private key */ new byte[32];
+try (Secp256k1Signer key = new Secp256k1Signer(privateKey)) {
+    EvmSignedTransaction signed = adapter.sign(tx, key);
+    byte[] rawBytes = adapter.rawBytes(signed); // broadcast bytes
+    byte[] txHash   = adapter.txHash(signed);   // txHash
+}
 ```
 
-## 安全要点
+## Quickstart (TRON)
 
-- `SigningKey`/`Signer` 不暴露私钥；`toString()` 返回 `{***REDACTED***}`
-- `SecureBytes` 提供安全擦除与安全拷贝
-- `Bip32.ExtendedKey` / `Slip10.ExtendedKey` 实现 `AutoCloseable`
-- 钱包/签名器/KeyHolder 支持 `destroy()`，推荐使用 try-with-resources
+```java
+import io.github.superedison.web3.chain.tron.TronChainAdapter;
+import io.github.superedison.web3.chain.tron.tx.TronRawTransaction;
+import io.github.superedison.web3.chain.tron.tx.TronSignedTransaction;
+import io.github.superedison.web3.chain.spi.ChainAdapter;
+import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 
-## 多链演进
+// Build intent (transfer)
+TronRawTransaction tx = TronRawTransaction.builder()
+        .from("T...")                  // sender (Base58)
+        .to("T...")                    // recipient (Base58)
+        .amount(1_000_000)             // sun
+        .refBlockBytes(new byte[]{0x00, 0x01})
+        .refBlockHash(new byte[8])
+        .expiration(System.currentTimeMillis() + 600_000)
+        .timestamp(System.currentTimeMillis())
+        .feeLimit(10_000_000)
+        .build();
 
-| 链 | 曲线 | HD 标准 | 默认路径 | 状态 |
-|----|------|---------|----------|------|
-| EVM | secp256k1 | BIP-32/44 | m/44'/60'/0'/0/0 | ✅ |
-| BTC | secp256k1 | BIP-32/84 | m/84'/0'/0'/0/0 | 🚧 |
-| SOL | ed25519 | SLIP-0010 | m/44'/501'/0'/0' | 🚧 |
-| APTOS | ed25519 | SLIP-0010 | m/44'/637'/0'/0'/0' | 🚧 |
-| NEAR | ed25519 | SLIP-0010 | m/44'/397'/0' | 🚧 |
-| TRON | secp256k1 | BIP-32/44 | m/44'/195'/0'/0/0 | ✅ |
-| COSMOS | secp256k1 | BIP-32/44 | m/44'/118'/0'/0/0 | 🚧 |
+ChainAdapter<TronRawTransaction, TronSignedTransaction> adapter = new TronChainAdapter();
 
-新增链：实现 `ChainAdapter` 并通过 SPI 注册。
-
-## 构建
-
-```bash
-mvn compile   # 编译
-mvn test      # 测试
-mvn install   # 安装
+try (Secp256k1Signer key = new Secp256k1Signer(/* 32-byte private key */ new byte[32])) {
+    TronSignedTransaction signed = adapter.sign(tx, key);
+    byte[] rawBytes = adapter.rawBytes(signed); // broadcast bytes
+    byte[] txHash   = adapter.txHash(signed);   // txid (SHA256(raw_data))
+}
 ```
+
+## Chain extension (SPI)
+- Interface: `io.github.superedison.web3.chain.spi.ChainAdapter`
+- SPI file: `META-INF/services/io.github.superedison.web3.chain.spi.ChainAdapter`
+- EVM example combines `TransactionEncoder` (RLP) + `TransactionHasher` (Keccak) + `TransactionSigner` (secp256k1).
+- TRON example combines `TransactionEncoder` (Protobuf raw_data) + `TransactionHasher` (SHA256 raw_data) + `TransactionSigner` (secp256k1).
+
+## Multi-chain plan
+
+| Chain | Curve | Default path | Status |
+|-------|-------|--------------|--------|
+| EVM | secp256k1 | m/44'/60'/0'/0/0 | Ready |
+| TRON | secp256k1 | m/44'/195'/0'/0/0 | Ready |
+| Others | - | - | Planned |
+
+To add a chain: implement `ChainAdapter`, your Raw/SignedTransaction, encoder/hasher/signer, then register via SPI.

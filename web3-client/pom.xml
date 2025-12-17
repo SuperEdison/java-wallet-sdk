@@ -5,12 +5,16 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.github.superedison</groupId>
-        <artifactId>web3-wallet-sdk</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <artifactId>java-wallet-sdk</artifactId>
+        <version>0.0.1</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>web3-client</artifactId>
-
+    <name>Web3 Wallet Client</name>
+    <description>
+        High-level client facade for the Web3 Wallet SDK. Integrates Core, Crypto, and Chain modules to provide a unified and simplified API for developers to manage wallets and transactions.
+    </description>
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
@@ -20,7 +24,7 @@
     <dependencies>
         <dependency>
             <groupId>io.github.superedison</groupId>
-            <artifactId>web3-chain</artifactId>
+            <artifactId>web3-chain-spi</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

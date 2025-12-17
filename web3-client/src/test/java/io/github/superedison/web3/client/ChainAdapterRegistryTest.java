@@ -1,20 +1,15 @@
 package io.github.superedison.web3.client;
 
-import io.github.superedison.web3.chain.ChainAdapter;
-import io.github.superedison.web3.chain.ChainType;
+import io.github.superedison.web3.chain.spi.ChainAdapter;
+import io.github.superedison.web3.chain.spi.ChainType;
 import io.github.superedison.web3.chain.exception.UnsupportedChainException;
-import io.github.superedison.web3.core.signer.Signature;
-import io.github.superedison.web3.core.transaction.RawTransaction;
-import io.github.superedison.web3.core.transaction.SignedTransaction;
-import io.github.superedison.web3.core.wallet.Address;
-import io.github.superedison.web3.core.wallet.HDWallet;
-import io.github.superedison.web3.core.wallet.Wallet;
+import io.github.superedison.web3.core.tx.RawTransaction;
+import io.github.superedison.web3.core.tx.SignedTransaction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
@@ -94,7 +89,7 @@ class ChainAdapterRegistryTest {
         void getRegisteredAdapter() {
             registry.register(evmAdapter);
 
-            ChainAdapter retrieved = registry.get(ChainType.EVM);
+            ChainAdapter<?, ?> retrieved = registry.get(ChainType.EVM);
 
             assertThat(retrieved).isSameAs(evmAdapter);
         }
@@ -116,7 +111,7 @@ class ChainAdapterRegistryTest {
         void findRegisteredAdapter() {
             registry.register(evmAdapter);
 
-            Optional<ChainAdapter> result = registry.find(ChainType.EVM);
+            Optional<ChainAdapter<?, ?>> result = registry.find(ChainType.EVM);
 
             assertThat(result).isPresent();
             assertThat(result.get()).isSameAs(evmAdapter);
@@ -125,7 +120,7 @@ class ChainAdapterRegistryTest {
         @Test
         @DisplayName("未注册的链类型应该返回 Optional.empty()")
         void findUnregisteredReturnsEmpty() {
-            Optional<ChainAdapter> result = registry.find(ChainType.EVM);
+            Optional<ChainAdapter<?, ?>> result = registry.find(ChainType.EVM);
 
             assertThat(result).isEmpty();
         }
@@ -220,7 +215,7 @@ class ChainAdapterRegistryTest {
     /**
      * 测试用的 ChainAdapter 实现
      */
-    private static class TestChainAdapter implements ChainAdapter {
+    private static class TestChainAdapter implements ChainAdapter<DummyRawTx, DummySignedTx> {
 
         private final ChainType chainType;
 
@@ -229,63 +224,55 @@ class ChainAdapterRegistryTest {
         }
 
         @Override
-        public ChainType getChainType() {
+        public ChainType chainType() {
             return chainType;
         }
 
         @Override
-        public boolean isValidAddress(String address) {
-            return false;
+        public DummySignedTx sign(DummyRawTx tx, io.github.superedison.web3.core.signer.SigningKey key) {
+            return new DummySignedTx(tx);
         }
 
         @Override
-        public Address parseAddress(String address) {
-            return null;
+        public byte[] rawBytes(DummySignedTx signedTx) {
+            return signedTx.rawBytes();
         }
 
         @Override
-        public Address deriveAddress(byte[] publicKey) {
-            return null;
+        public byte[] txHash(DummySignedTx signedTx) {
+            return signedTx.txHash();
+        }
+    }
+
+    private static class DummyRawTx implements RawTransaction {
+        // marker
+    }
+
+    private static class DummySignedTx implements SignedTransaction<DummyRawTx> {
+        private final DummyRawTx rawTx;
+
+        DummySignedTx(DummyRawTx rawTx) {
+            this.rawTx = rawTx;
         }
 
         @Override
-        public HDWallet createHDWallet(int wordCount) {
-            return null;
+        public DummyRawTx rawTransaction() {
+            return rawTx;
         }
 
         @Override
-        public HDWallet fromMnemonic(List<String> mnemonic, String passphrase, String path) {
-            return null;
-        }
-
-        @Override
-        public Wallet fromPrivateKey(byte[] privateKey) {
-            return null;
-        }
-
-        @Override
-        public byte[] encodeTransaction(RawTransaction transaction) {
+        public byte[] rawBytes() {
             return new byte[0];
         }
 
         @Override
-        public byte[] hashTransaction(RawTransaction transaction) {
+        public byte[] txHash() {
             return new byte[0];
         }
 
         @Override
-        public byte[] encodeSignedTransaction(SignedTransaction transaction) {
-            return new byte[0];
-        }
-
-        @Override
-        public byte[] hashMessage(byte[] message) {
-            return new byte[0];
-        }
-
-        @Override
-        public Address recoverSigner(byte[] hash, Signature signature) {
-            return null;
+        public String from() {
+            return "0x0";
         }
     }
 }

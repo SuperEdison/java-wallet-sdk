@@ -5,12 +5,17 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.github.superedison</groupId>
-        <artifactId>web3-wallet-sdk</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <artifactId>java-wallet-sdk</artifactId>
+        <version>0.0.1</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
+    <packaging>pom</packaging>
 
     <artifactId>web3-chain</artifactId>
-
+    <name>Web3 Wallet Chain Parent</name>
+    <description>
+        Parent module for blockchain integration adapters. Aggregates the Service Provider Interface (SPI) and specific blockchain implementations (EVM, Tron, etc.) for the Web3 Wallet SDK.
+    </description>
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>

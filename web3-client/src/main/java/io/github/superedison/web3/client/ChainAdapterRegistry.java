@@ -1,8 +1,10 @@
 package io.github.superedison.web3.client;
 
-import io.github.superedison.web3.chain.ChainAdapter;
-import io.github.superedison.web3.chain.ChainType;
+import io.github.superedison.web3.chain.spi.ChainAdapter;
+import io.github.superedison.web3.chain.spi.ChainType;
 import io.github.superedison.web3.chain.exception.UnsupportedChainException;
+import io.github.superedison.web3.core.tx.RawTransaction;
+import io.github.superedison.web3.core.tx.SignedTransaction;
 
 import java.util.Map;
 import java.util.Optional;
@@ -15,13 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ChainAdapterRegistry {
 
-    private final Map<ChainType, ChainAdapter> adapters = new ConcurrentHashMap<>();
+    private final Map<ChainType, ChainAdapter<?, ?>> adapters = new ConcurrentHashMap<>();
 
     /**
      * 注册适配器
      */
-    public ChainAdapterRegistry register(ChainAdapter adapter) {
-        adapters.put(adapter.getChainType(), adapter);
+    public ChainAdapterRegistry register(ChainAdapter<?, ?> adapter) {
+        adapters.put(adapter.chainType(), adapter);
         return this;
     }
 
@@ -29,8 +31,8 @@ public final class ChainAdapterRegistry {
      * 获取适配器
      * @throws UnsupportedChainException 如果链类型未注册
      */
-    public ChainAdapter get(ChainType chainType) {
-        ChainAdapter adapter = adapters.get(chainType);
+    public ChainAdapter<?, ?> get(ChainType chainType) {
+        ChainAdapter<?, ?> adapter = adapters.get(chainType);
         if (adapter == null) {
             throw new UnsupportedChainException(chainType);
         }
@@ -38,9 +40,18 @@ public final class ChainAdapterRegistry {
     }
 
     /**
+     * 获取类型化的适配器
+     * 调用方需确保类型匹配
+     */
+    @SuppressWarnings("unchecked")
+    public <TX extends RawTransaction, STX extends SignedTransaction<TX>> ChainAdapter<TX, STX> getTyped(ChainType chainType) {
+        return (ChainAdapter<TX, STX>) get(chainType);
+    }
+
+    /**
      * 获取适配器（可选）
      */
-    public Optional<ChainAdapter> find(ChainType chainType) {
+    public Optional<ChainAdapter<?, ?>> find(ChainType chainType) {
         return Optional.ofNullable(adapters.get(chainType));
     }
 
@@ -54,6 +65,7 @@ public final class ChainAdapterRegistry {
     /**
      * 从 ServiceLoader 自动发现并注册适配器
      */
+    @SuppressWarnings("rawtypes")
     public ChainAdapterRegistry autoDiscover() {
         ServiceLoader<ChainAdapter> loader = ServiceLoader.load(ChainAdapter.class);
         for (ChainAdapter adapter : loader) {

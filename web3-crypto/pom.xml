@@ -5,12 +5,16 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>io.github.superedison</groupId>
-        <artifactId>web3-wallet-sdk</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <artifactId>java-wallet-sdk</artifactId>
+        <version>0.0.1</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>web3-crypto</artifactId>
-
+    <name>Web3 Wallet Crypto</name>
+    <description>
+        Cryptographic primitives and algorithms for the Web3 Wallet SDK. Includes implementations for Hashing, Digital Signatures (Secp256k1, Ed25519), and HD Wallet standards (BIP32, BIP39, BIP44, SLIP10).
+    </description>
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>

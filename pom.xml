@@ -2,25 +2,40 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.superedison</groupId>
-    <artifactId>web3-wallet-sdk</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>Archetype - wallet-sdk</name>
+    <artifactId>java-wallet-sdk</artifactId>
+    <version>0.0.1</version>
+    <name>Java Version Web3 Wallet SDK</name>
+    <description>Modular web3 wallet SDK for Java: core semantics, crypto primitives, chain adapters, and client
+        facade.
+    </description>
     <licenses>
         <license>
             <name>MIT License</name>
             <url>https://opensource.org/licenses/MIT</url>
         </license>
     </licenses>
+    <url>https://github.com/SuperEdison/java-wallet-sdk</url>
+    <scm>
+        <url>https://github.com/SuperEdison/java-wallet-sdk</url>
+        <connection>scm:git:https://github.com/SuperEdison/java-wallet-sdk.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com:SuperEdison/java-wallet-sdk.git</developerConnection>
+    </scm>
+    <developers>
+        <developer>
+            <id>superedison</id>
+            <name>Edison</name>
+            <email>84554944+SuperEdison@users.noreply.github.com</email>
+        </developer>
+    </developers>
 
     <modules>
         <module>web3-core</module>
         <module>web3-crypto</module>
-        <module>web3-abi</module>
         <module>web3-chain</module>
-        <module>web3-chain-evm</module>
-        <module>web3-chain-btc</module>
+        <module>web3-chain/spi</module>
+        <module>web3-chain/evm</module>
+        <module>web3-chain/tron</module>
         <module>web3-client</module>
-        <module>web-chain-tron</module>
     </modules>
     <packaging>pom</packaging>
 
@@ -66,6 +81,78 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.12.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <doclint>none</doclint>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.2.8</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <gpgArguments>
+                        <arg>--pinentry-mode</arg>
+                        <arg>loopback</arg>
+                    </gpgArguments>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.9.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <tokenAuth>true</tokenAuth>
+                    <autoPublish>true</autoPublish>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>3.1.4</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
 </project>
