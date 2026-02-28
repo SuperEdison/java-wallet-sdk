@@ -37,7 +37,8 @@ public final class SolanaTransactionSigner implements TransactionSigner<SolanaRa
         }
 
         // 编码已签名交易
-        byte[] signedBytes = encoder.encodeSigned(tx, new byte[][]{signatureBytes});
+        // Bug 3 修复：传入已编码的 message 字节而非 tx，避免双重编码
+        byte[] signedBytes = encoder.encodeSigned(message, new byte[][]{signatureBytes});
 
         // 获取发送者地址（公钥）
         byte[] publicKey = key.getPublicKey();

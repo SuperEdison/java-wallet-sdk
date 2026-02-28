@@ -32,12 +32,11 @@ public final class TronTransactionSigner implements TransactionSigner<TronRawTra
         byte[] txHash = hasher.hash(rawData);
 
         Signature sig = key.sign(txHash);
-        byte[] sigBytes = sig.bytes();
-        if (sigBytes.length != 65) {
-            throw new IllegalArgumentException("Signature must be 65 bytes for TRON");
+        if (!(sig instanceof io.github.superedison.web3.crypto.ecc.Secp256k1Signer.Secp256k1Signature secp256k1Sig)) {
+            throw new IllegalArgumentException("TRON requires Secp256k1Signature");
         }
 
-        TronSignature tronSig = TronSignature.fromCompact(sigBytes);
+        TronSignature tronSig = TronSignature.fromSecp256k1Signature(secp256k1Sig);
         byte[] signedBytes = TronProtobuf.encodeSignedTransaction(rawData, tronSig.bytes());
 
         String from = TronAddress.fromPublicKey(key.getPublicKey()).toBase58();

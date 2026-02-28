@@ -55,7 +55,9 @@ public final class TronSignature implements Signature {
         }
         byte[] r = Arrays.copyOfRange(signature, 0, 32);
         byte[] s = Arrays.copyOfRange(signature, 32, 64);
-        int v = signature[64] & 0xFF;
+        int rawV = signature[64] & 0xFF;
+        // 归一化：recoveryId (0/1) 映射为 TRON 标准 v (27/28)
+        int v = (rawV == 0 || rawV == 1) ? rawV + 27 : rawV;
         return new TronSignature(r, s, v);
     }
 

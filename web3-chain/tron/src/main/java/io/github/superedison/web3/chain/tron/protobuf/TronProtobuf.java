@@ -160,6 +160,9 @@ public final class TronProtobuf {
             writeFieldHeader(out, 14, WIRE_VARINT);
             writeVarint(out, timestamp);
             // Field 18: fee_limit (only if non-zero)
+            if (feeLimit < 0) {
+                throw new IllegalArgumentException("feeLimit cannot be negative");
+            }
             if (feeLimit > 0) {
                 writeFieldHeader(out, 18, WIRE_VARINT);
                 writeVarint(out, feeLimit);

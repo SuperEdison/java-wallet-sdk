@@ -14,9 +14,9 @@ public final class EvmSignature implements Signature {
 
     private final byte[] r;
     private final byte[] s;
-    private final int v;
+    private final long v;
 
-    private EvmSignature(byte[] r, byte[] s, int v) {
+    private EvmSignature(byte[] r, byte[] s, long v) {
         this.r = r;
         this.s = s;
         this.v = v;
@@ -26,7 +26,7 @@ public final class EvmSignature implements Signature {
      * 从 recoveryId 创建 (recoveryId: 0/1 -> v: 27/28)
      */
     public static EvmSignature fromRecoveryId(byte[] r, byte[] s, int recoveryId) {
-        return new EvmSignature(padTo32(r), padTo32(s), recoveryId + 27);
+        return new EvmSignature(padTo32(r), padTo32(s), (long) recoveryId + 27);
     }
 
     /**
@@ -38,7 +38,7 @@ public final class EvmSignature implements Signature {
         }
         byte[] r = Arrays.copyOfRange(signature, 0, 32);
         byte[] s = Arrays.copyOfRange(signature, 32, 64);
-        int v = signature[64] & 0xFF;
+        long v = signature[64] & 0xFF;
         return new EvmSignature(r, s, v);
     }
 
@@ -64,15 +64,18 @@ public final class EvmSignature implements Signature {
         return Arrays.copyOf(s, 32);
     }
 
-    public int getV() {
+    public long getV() {
         return v;
     }
 
     public int getRecoveryId() {
-        if (v >= 35) {
-            return (v - 35) % 2;
+        if (v == 0 || v == 1) {
+            return (int) v;        // 原始 recId（来自 Secp256k1Signature.toCompact()）
         }
-        return v - 27;
+        if (v >= 35) {
+            return (int) ((v - 35) % 2);  // EIP-155 编码
+        }
+        return (int) (v - 27);     // legacy 27/28 格式
     }
 
     public BigInteger getRBigInt() {
@@ -87,7 +90,7 @@ public final class EvmSignature implements Signature {
      * 转换为 EIP-155 签名
      */
     public EvmSignature toEip155(long chainId) {
-        int newV = (int) (chainId * 2 + 35 + getRecoveryId());
+        long newV = chainId * 2 + 35 + getRecoveryId();
         return new EvmSignature(r, s, newV);
     }
 

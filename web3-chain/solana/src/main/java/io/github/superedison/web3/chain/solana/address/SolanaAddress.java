@@ -81,8 +81,10 @@ public final class SolanaAddress implements Address {
         if (address == null || address.isEmpty()) {
             return false;
         }
-        // Solana 地址通常是 32-44 个字符
-        if (address.length() < 32 || address.length() > 44) {
+        // Solana 地址是 32 字节 Ed25519 公钥的 Base58 编码，最长 44 个字符。
+        // Bug 4 修复：移除下界 32 的硬性限制；实际有效性由解码后的字节长度（== 32）判断。
+        // 前导零字节编码后字符数可能少于 32，因此不能以字符数作为下界过滤。
+        if (address.length() > 44) {
             return false;
         }
         try {

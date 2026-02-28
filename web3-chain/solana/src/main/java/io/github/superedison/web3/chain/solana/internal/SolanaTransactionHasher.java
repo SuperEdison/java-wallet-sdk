@@ -15,6 +15,7 @@ public final class SolanaTransactionHasher implements TransactionHasher {
         // Solana 的交易哈希就是签名本身
         // 在签名完成后，txHash 直接使用签名
         // 这里主要用于消息签名前的处理
-        return data;
+        // Bug 6 修复：返回防御性拷贝，防止调用方修改内部状态。
+        return java.util.Arrays.copyOf(data, data.length);
     }
 }

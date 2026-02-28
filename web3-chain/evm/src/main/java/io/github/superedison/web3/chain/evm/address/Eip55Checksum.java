@@ -2,6 +2,8 @@ package io.github.superedison.web3.chain.evm.address;
 
 import io.github.superedison.web3.crypto.hash.Keccak256;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * EIP-55 地址校验和
  */
@@ -16,7 +18,7 @@ public final class Eip55Checksum {
      */
     public static String apply(String address) {
         String lower = address.toLowerCase();
-        byte[] hash = Keccak256.hash(lower.getBytes());
+        byte[] hash = Keccak256.hash(lower.getBytes(StandardCharsets.US_ASCII));
         StringBuilder sb = new StringBuilder("0x");
 
         for (int i = 0; i < 40; i++) {

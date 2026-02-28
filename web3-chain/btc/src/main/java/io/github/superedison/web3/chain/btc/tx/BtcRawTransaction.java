@@ -54,17 +54,23 @@ public final class BtcRawTransaction implements RawTransaction {
 
     /**
      * 交易输入
+     *
+     * amount 字段存储该输入所花费的 UTXO 金额（单位：聪），BIP-143 SegWit 签名哈希必须包含此值。
+     * scriptPubKey 字段存储该输入对应的 UTXO 锁定脚本，Legacy 签名哈希替换 scriptSig 时使用。
      */
     public record TxInput(
             byte[] prevTxHash,
             int prevOutputIndex,
             byte[] scriptSig,
             long sequence,
-            byte[][] witness
+            byte[][] witness,
+            long amount,
+            byte[] scriptPubKey
     ) {
         public TxInput {
             prevTxHash = Arrays.copyOf(prevTxHash, prevTxHash.length);
             scriptSig = scriptSig != null ? Arrays.copyOf(scriptSig, scriptSig.length) : new byte[0];
+            scriptPubKey = scriptPubKey != null ? Arrays.copyOf(scriptPubKey, scriptPubKey.length) : new byte[0];
             if (witness != null) {
                 byte[][] witnessCopy = new byte[witness.length][];
                 for (int i = 0; i < witness.length; i++) {
@@ -74,12 +80,23 @@ public final class BtcRawTransaction implements RawTransaction {
             }
         }
 
+        /**
+         * 向后兼容构造：不携带 amount / scriptPubKey 的输入（amount=0, scriptPubKey=空）
+         */
+        public TxInput(byte[] prevTxHash, int prevOutputIndex, byte[] scriptSig, long sequence, byte[][] witness) {
+            this(prevTxHash, prevOutputIndex, scriptSig, sequence, witness, 0L, new byte[0]);
+        }
+
         public byte[] prevTxHash() {
             return Arrays.copyOf(prevTxHash, prevTxHash.length);
         }
 
         public byte[] scriptSig() {
             return Arrays.copyOf(scriptSig, scriptSig.length);
+        }
+
+        public byte[] scriptPubKey() {
+            return Arrays.copyOf(scriptPubKey, scriptPubKey.length);
         }
 
         public byte[][] witness() {
@@ -138,11 +155,28 @@ public final class BtcRawTransaction implements RawTransaction {
         }
 
         public Builder addInput(byte[] prevTxHash, int prevOutputIndex) {
-            return addInput(prevTxHash, prevOutputIndex, new byte[0], 0xffffffffL, null);
+            return addInput(prevTxHash, prevOutputIndex, new byte[0], 0xffffffffL, null, 0L, new byte[0]);
+        }
+
+        /**
+         * 添加 UTXO 输入，携带金额和锁定脚本（用于正确生成签名哈希）。
+         *
+         * @param amount      该 UTXO 的金额（聪），BIP-143 SegWit 签名时必须提供
+         * @param scriptPubKey 该 UTXO 的锁定脚本，Legacy 签名时用于替换 scriptSig
+         */
+        public Builder addInput(byte[] prevTxHash, int prevOutputIndex,
+                                long amount, byte[] scriptPubKey) {
+            return addInput(prevTxHash, prevOutputIndex, new byte[0], 0xffffffffL, null, amount, scriptPubKey);
         }
 
         public Builder addInput(byte[] prevTxHash, int prevOutputIndex, byte[] scriptSig, long sequence, byte[][] witness) {
-            inputs.add(new TxInput(prevTxHash, prevOutputIndex, scriptSig, sequence, witness));
+            return addInput(prevTxHash, prevOutputIndex, scriptSig, sequence, witness, 0L, new byte[0]);
+        }
+
+        public Builder addInput(byte[] prevTxHash, int prevOutputIndex, byte[] scriptSig, long sequence,
+                                byte[][] witness, long amount, byte[] scriptPubKey) {
+            inputs.add(new TxInput(prevTxHash, prevOutputIndex, scriptSig, sequence, witness, amount,
+                    scriptPubKey != null ? scriptPubKey : new byte[0]));
             if (witness != null && witness.length > 0) {
                 segwit = true;
             }

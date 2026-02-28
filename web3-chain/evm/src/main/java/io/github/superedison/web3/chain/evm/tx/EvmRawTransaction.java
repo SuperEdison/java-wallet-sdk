@@ -126,6 +126,9 @@ public final class EvmRawTransaction implements RawTransaction {
         }
 
         private static byte[] hexToBytes(String hex) {
+            if (hex.length() % 2 != 0) {
+                throw new IllegalArgumentException("Hex string must have even length, got: " + hex.length());
+            }
             byte[] bytes = new byte[hex.length() / 2];
             for (int i = 0; i < bytes.length; i++) {
                 bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);

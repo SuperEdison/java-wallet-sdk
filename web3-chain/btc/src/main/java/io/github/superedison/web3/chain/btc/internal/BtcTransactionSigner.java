@@ -9,8 +9,6 @@ import io.github.superedison.web3.chain.spi.TransactionSigner;
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
 import io.github.superedison.web3.core.signer.SigningKey;
-import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -69,10 +67,8 @@ public final class BtcTransactionSigner implements TransactionSigner<BtcRawTrans
                 byte[] pubKeyHash = hash160(pubKey);
                 byte[] scriptCode = createP2PKHScript(pubKeyHash);
 
-                // BIP-143 签名哈希
-                // 注意：这里需要知道输入的金额，通常从外部传入
-                // 简化版本假设金额为 0（实际使用时需要传入正确的金额）
-                long amount = 0; // TODO: 需要从 UTXO 获取
+                // Bug 4 修复：从 Input 获取实际 UTXO 金额（BIP-143 要求）
+                long amount = input.amount();
 
                 byte[] preimage = encoder.encodeBip143Preimage(tx, i, scriptCode, amount, SIGHASH_ALL);
                 byte[] sigHash = hasher.hash(preimage);
@@ -95,26 +91,37 @@ public final class BtcTransactionSigner implements TransactionSigner<BtcRawTrans
                         input.prevOutputIndex(),
                         new byte[0],
                         input.sequence(),
-                        witness
+                        witness,
+                        input.amount(),
+                        input.scriptPubKey()
                 ));
             }
 
-            // 创建签名后的交易
-            BtcRawTransaction signedTx = BtcRawTransaction.builder()
+            // Bug 1 修复：用 signedInputs（含 witness 数据）和原始 outputs 构建已签名交易
+            BtcRawTransaction.Builder builder = BtcRawTransaction.builder()
                     .version(tx.getVersion())
                     .lockTime(tx.getLockTime())
-                    .segwit(true)
-                    .build();
+                    .segwit(true);
 
-            // 编码交易
-            byte[] rawBytes = encoder.encodeTransaction(tx, true);
-            byte[] rawBytesWithoutWitness = encoder.encodeTransaction(tx, false);
+            for (TxInput si : signedInputs) {
+                builder.addInput(si.prevTxHash(), si.prevOutputIndex(),
+                        si.scriptSig(), si.sequence(), si.witness(),
+                        si.amount(), si.scriptPubKey());
+            }
+            for (BtcRawTransaction.TxOutput output : tx.getOutputs()) {
+                builder.addOutput(output.value(), output.scriptPubKey());
+            }
+            BtcRawTransaction signedTx = builder.build();
+
+            // 编码已签名的交易（使用 signedTx，而非原始 tx）
+            byte[] rawBytes = encoder.encodeTransaction(signedTx, true);
+            byte[] rawBytesWithoutWitness = encoder.encodeTransaction(signedTx, false);
 
             // 计算交易哈希
             byte[] txHash = hasher.computeTxid(rawBytesWithoutWitness);
             byte[] wtxid = hasher.computeWtxid(rawBytes);
 
-            return new BtcSignedTransaction(tx, from, rawBytes, txHash, wtxid);
+            return new BtcSignedTransaction(signedTx, from, rawBytes, rawBytesWithoutWitness.length, txHash, wtxid);
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to sign SegWit transaction", e);
@@ -132,12 +139,14 @@ public final class BtcTransactionSigner implements TransactionSigner<BtcRawTrans
             for (int i = 0; i < tx.getInputs().size(); i++) {
                 TxInput input = tx.getInputs().get(i);
 
-                // 创建签名哈希
-                // 简化版本：使用输入的 scriptSig 作为 scriptPubKey
-                byte[] pubKeyHash = hash160(pubKey);
-                byte[] scriptPubKey = createP2PKHScript(pubKeyHash);
+                // Bug 3 修复：优先使用输入自带的 scriptPubKey；若未提供，则从公钥推导 P2PKH 脚本
+                byte[] scriptPubKey = input.scriptPubKey();
+                if (scriptPubKey == null || scriptPubKey.length == 0) {
+                    byte[] pubKeyHash = hash160(pubKey);
+                    scriptPubKey = createP2PKHScript(pubKeyHash);
+                }
 
-                // 编码用于签名的交易（替换当前输入的 scriptSig）
+                // 编码用于签名的交易（对当前输入替换 scriptSig，其他输入置空）
                 byte[] sigHash = computeLegacySigHash(tx, i, scriptPubKey);
 
                 // 签名
@@ -160,17 +169,34 @@ public final class BtcTransactionSigner implements TransactionSigner<BtcRawTrans
                         input.prevOutputIndex(),
                         scriptSig.toByteArray(),
                         input.sequence(),
-                        null
+                        null,
+                        input.amount(),
+                        input.scriptPubKey()
                 ));
             }
 
-            // 编码交易
-            byte[] rawBytes = encoder.encodeTransaction(tx, false);
+            // Bug 2 修复：用 signedInputs 和原始 outputs 构建已签名交易
+            BtcRawTransaction.Builder builder = BtcRawTransaction.builder()
+                    .version(tx.getVersion())
+                    .lockTime(tx.getLockTime());
+
+            for (TxInput si : signedInputs) {
+                builder.addInput(si.prevTxHash(), si.prevOutputIndex(),
+                        si.scriptSig(), si.sequence(), null,
+                        si.amount(), si.scriptPubKey());
+            }
+            for (BtcRawTransaction.TxOutput output : tx.getOutputs()) {
+                builder.addOutput(output.value(), output.scriptPubKey());
+            }
+            BtcRawTransaction signedTx = builder.build();
+
+            // 编码已签名的交易（使用 signedTx，而非原始 tx）
+            byte[] rawBytes = encoder.encodeTransaction(signedTx, false);
 
             // 计算交易哈希
             byte[] txHash = hasher.computeTxid(rawBytes);
 
-            return new BtcSignedTransaction(tx, from, rawBytes, txHash, null);
+            return new BtcSignedTransaction(signedTx, from, rawBytes, rawBytes.length, txHash, null);
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to sign Legacy transaction", e);
@@ -178,17 +204,35 @@ public final class BtcTransactionSigner implements TransactionSigner<BtcRawTrans
     }
 
     /**
-     * 计算 Legacy 签名哈希
+     * 计算 Legacy 签名哈希 (BIP-143 之前的格式)
+     *
+     * Bug 3 修复：对于正在签名的输入，用其 scriptPubKey 替换 scriptSig；
+     * 其他所有输入的 scriptSig 设为空字节数组。
      */
     private byte[] computeLegacySigHash(BtcRawTransaction tx, int inputIndex, byte[] scriptPubKey) throws IOException {
+        // 构造一个临时交易：当前输入的 scriptSig = scriptPubKey，其他输入 scriptSig = 空
+        BtcRawTransaction.Builder builder = BtcRawTransaction.builder()
+                .version(tx.getVersion())
+                .lockTime(tx.getLockTime());
+
+        for (int i = 0; i < tx.getInputs().size(); i++) {
+            TxInput orig = tx.getInputs().get(i);
+            byte[] script = (i == inputIndex) ? scriptPubKey : new byte[0];
+            builder.addInput(orig.prevTxHash(), orig.prevOutputIndex(),
+                    script, orig.sequence(), null,
+                    orig.amount(), orig.scriptPubKey());
+        }
+        for (BtcRawTransaction.TxOutput output : tx.getOutputs()) {
+            builder.addOutput(output.value(), output.scriptPubKey());
+        }
+        BtcRawTransaction signingTx = builder.build();
+
+        // 序列化（不含 witness）
+        byte[] encoded = encoder.encodeTransaction(signingTx, false);
+
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
-        // 编码交易，但替换输入的 scriptSig
-        // 这里简化处理，实际需要完整实现
-        byte[] encoded = encoder.encodeForSigning(tx);
-
         baos.write(encoded);
-        // 添加 hash type (4 bytes, little-endian)
+        // 追加 hash type (4 bytes, little-endian)
         baos.write(SIGHASH_ALL);
         baos.write(0);
         baos.write(0);

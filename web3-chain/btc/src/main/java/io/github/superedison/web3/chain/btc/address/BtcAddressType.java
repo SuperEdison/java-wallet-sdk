@@ -96,13 +96,16 @@ public enum BtcAddressType {
         if (address == null || address.isEmpty()) {
             return null;
         }
-        if (address.startsWith("bc1p") || address.startsWith("tb1p")) {
+        // Taproot (P2TR): mainnet bc1p, testnet tb1p, regtest bcrt1p
+        if (address.startsWith("bc1p") || address.startsWith("tb1p") || address.startsWith("bcrt1p")) {
             return P2TR;
         }
-        if (address.startsWith("bc1q") || address.startsWith("tb1q")) {
+        // Native SegWit (P2WPKH / P2WSH): mainnet bc1q, testnet tb1q, regtest bcrt1q
+        if (address.startsWith("bc1q") || address.startsWith("tb1q") || address.startsWith("bcrt1q")) {
             // 根据长度区分 P2WPKH 和 P2WSH
-            // P2WPKH: 42 字符 (mainnet), P2WSH: 62 字符 (mainnet)
-            if (address.length() == 42 || address.length() == 43) {
+            // P2WPKH: 42 字符 (mainnet/testnet), 44 字符 (regtest bcrt1q)
+            // P2WSH:  62 字符 (mainnet/testnet), 64 字符 (regtest bcrt1q)
+            if (address.length() <= 46) {
                 return P2WPKH;
             }
             return P2WSH;

@@ -48,6 +48,9 @@ public final class RlpEncoder {
      * 注意：0 编码为空字节 (0x80)
      */
     public static byte[] encodeBigInteger(BigInteger value) {
+        if (value != null && value.signum() < 0) {
+            throw new IllegalArgumentException("RLP cannot encode negative integers");
+        }
         if (value == null || value.equals(BigInteger.ZERO)) {
             return encodeBytes(new byte[0]);
         }

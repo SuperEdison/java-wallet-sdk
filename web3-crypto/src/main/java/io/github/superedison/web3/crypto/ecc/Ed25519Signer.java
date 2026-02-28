@@ -27,7 +27,7 @@ public class Ed25519Signer implements SigningKey {
 
     private final byte[] privateKey;
     private final byte[] publicKey;
-    private final Ed25519PrivateKeyParameters privateKeyParams;
+    private Ed25519PrivateKeyParameters privateKeyParams;
     private volatile boolean destroyed = false;
 
     /**
@@ -151,6 +151,14 @@ public class Ed25519Signer implements SigningKey {
     public void destroy() {
         if (!destroyed) {
             SecureBytes.secureWipe(privateKey);
+            // 尝试擦除 BouncyCastle 内部密钥副本
+            try {
+                byte[] encoded = privateKeyParams.getEncoded();
+                SecureBytes.secureWipe(encoded);
+            } catch (Exception ignored) {
+                // BC 可能不允许访问内部状态
+            }
+            privateKeyParams = null;
             destroyed = true;
         }
     }

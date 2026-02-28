@@ -12,6 +12,8 @@ public final class BtcSignedTransaction implements SignedTransaction<BtcRawTrans
     private final BtcRawTransaction rawTransaction;
     private final String from;
     private final byte[] rawBytes;
+    /** non-witness 序列化字节数，用于精确计算 vsize（BIP-141 weight） */
+    private final int baseSize;
     private final byte[] txHash;
     private final byte[] wtxid;
 
@@ -19,14 +21,27 @@ public final class BtcSignedTransaction implements SignedTransaction<BtcRawTrans
             BtcRawTransaction rawTransaction,
             String from,
             byte[] rawBytes,
+            int baseSize,
             byte[] txHash,
             byte[] wtxid
     ) {
         this.rawTransaction = rawTransaction;
         this.from = from;
         this.rawBytes = Arrays.copyOf(rawBytes, rawBytes.length);
+        this.baseSize = baseSize;
         this.txHash = Arrays.copyOf(txHash, txHash.length);
         this.wtxid = wtxid != null ? Arrays.copyOf(wtxid, wtxid.length) : txHash;
+    }
+
+    /** 向后兼容构造：不提供 baseSize 时回退为旧行为（仅用于非 SegWit 交易） */
+    public BtcSignedTransaction(
+            BtcRawTransaction rawTransaction,
+            String from,
+            byte[] rawBytes,
+            byte[] txHash,
+            byte[] wtxid
+    ) {
+        this(rawTransaction, from, rawBytes, rawBytes.length, txHash, wtxid);
     }
 
     @Override
@@ -71,16 +86,19 @@ public final class BtcSignedTransaction implements SignedTransaction<BtcRawTrans
     }
 
     /**
-     * 获取虚拟大小（vsize）用于费用计算
+     * 获取虚拟大小（vsize）用于费用计算。
+     *
+     * Bug 6 修复：BIP-141 定义 weight = base_size * 3 + total_size，vsize = ceil(weight / 4)。
+     * 对于 Legacy 交易，base_size == total_size，因此 vsize == total_size。
+     * 对于 SegWit 交易，baseSize 为不含 witness 标记和 witness 数据的序列化大小。
      */
     public int getVsize() {
         if (!rawTransaction.isSegwit()) {
             return rawBytes.length;
         }
-        // vsize = (weight + 3) / 4
-        // weight = base_size * 3 + total_size
-        // 简化计算：假设 witness 数据大约占 total_size 的一定比例
-        return (rawBytes.length + 3) / 4;
+        // weight = baseSize * 3 + totalSize
+        int weight = baseSize * 3 + rawBytes.length;
+        return (weight + 3) / 4;
     }
 
     public boolean isValid() {

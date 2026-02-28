@@ -37,9 +37,11 @@ public final class Base58 {
             leadingZeros++;
         }
 
-        // 转换为 Base58
+        // Bug 5 修复：原缓冲区大小 temp.length * 2 在理论上足够，但依赖于输入分布。
+        // Base58 每个字节平均产生 log(256)/log(58) ≈ 1.366 个字符，乘以 1.37 并加 2 留有余量，
+        // 保证任意输入都不会溢出。
         byte[] temp = Arrays.copyOf(input, input.length);
-        char[] encoded = new char[temp.length * 2];
+        char[] encoded = new char[(int) (temp.length * 1.37) + 2];
         int outputStart = encoded.length;
 
         int start = leadingZeros;

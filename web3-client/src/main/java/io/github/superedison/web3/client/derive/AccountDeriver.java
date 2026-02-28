@@ -18,6 +18,7 @@ import io.github.superedison.web3.crypto.wallet.UnifiedHDWallet;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 多链账户派生工具
@@ -59,12 +60,12 @@ import java.util.List;
 public final class AccountDeriver implements AutoCloseable {
 
     /**
-     * 最大账户索引 (2^31 - 1)
+     * 账户索引取模值 (2^31)，使索引范围覆盖 [0, 2^31-1]
      */
-    private static final long MAX_ACCOUNT_INDEX = 0x7FFFFFFFL;
+    private static final long ACCOUNT_INDEX_MODULUS = 0x80000000L;
 
     private final UnifiedHDWallet hdWallet;
-    private volatile boolean destroyed = false;
+    private final AtomicBoolean destroyed = new AtomicBoolean(false);
 
     private AccountDeriver(UnifiedHDWallet hdWallet) {
         this.hdWallet = hdWallet;
@@ -207,21 +208,28 @@ public final class AccountDeriver implements AutoCloseable {
         checkNotDestroyed();
 
         List<ChainDeriveResult> results = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            int accountIndex = startAccount + i;
-            String path = buildPath(chainType, accountIndex, options);
-            DerivationScheme scheme = getScheme(chainType);
+        try {
+            for (int i = 0; i < count; i++) {
+                int accountIndex = startAccount + i;
+                String path = buildPath(chainType, accountIndex, options);
+                DerivationScheme scheme = getScheme(chainType);
 
-            DerivedKey derivedKey = hdWallet.derivePath(path, scheme);
-            try {
-                byte[] publicKey = getPublicKeyForChain(derivedKey, chainType);
-                String address = encodeAddress(publicKey, chainType, options);
-                SigningKey signingKey = derivedKey.toSigningKey();
+                DerivedKey derivedKey = hdWallet.derivePath(path, scheme);
+                try {
+                    byte[] publicKey = getPublicKeyForChain(derivedKey, chainType);
+                    String address = encodeAddress(publicKey, chainType, options);
+                    SigningKey signingKey = derivedKey.toSigningKey();
 
-                results.add(new ChainDeriveResult(null, accountIndex, path, chainType, address, signingKey));
-            } finally {
-                derivedKey.destroy();
+                    results.add(new ChainDeriveResult(null, accountIndex, path, chainType, address, signingKey));
+                } finally {
+                    derivedKey.destroy();
+                }
             }
+        } catch (Exception e) {
+            for (ChainDeriveResult r : results) {
+                try { r.close(); } catch (Exception ignored) {}
+            }
+            throw e;
         }
         return results;
     }
@@ -300,7 +308,7 @@ public final class AccountDeriver implements AutoCloseable {
      * 算法：SHA256(userId) -> 取前4字节 -> 转为无符号整数 -> % 2^31
      *
      * @param userId 用户标识符
-     * @return 账户索引 (0 到 2^31-1)
+     * @return 账户索引 (0 到 2^31-1，含两端)
      */
     public static int userIdToAccountIndex(String userId) {
         if (userId == null || userId.isEmpty()) {
@@ -309,7 +317,7 @@ public final class AccountDeriver implements AutoCloseable {
 
         byte[] hash = Sha256.hash(userId);
         long value = ByteBuffer.wrap(hash, 0, 4).getInt() & 0xFFFFFFFFL;
-        return (int) (value % MAX_ACCOUNT_INDEX);
+        return (int) (value % ACCOUNT_INDEX_MODULUS);
     }
 
     /**
@@ -336,6 +344,11 @@ public final class AccountDeriver implements AutoCloseable {
         int coinType = getCoinType(chainType);
 
         if (chainType.isEd25519()) {
+            // Ed25519 链不使用 change 层级；非零值意味着调用方传参有误
+            if (change != 0) {
+                throw new IllegalArgumentException(
+                        "Ed25519 chains do not support non-zero change parameter, got: " + change);
+            }
             // Ed25519 链使用硬化的 address_index
             return String.format("m/44'/%d'/%d'/%d'", coinType, accountIndex, addressIndex);
         }
@@ -379,9 +392,8 @@ public final class AccountDeriver implements AutoCloseable {
      * 销毁派生器
      */
     public void destroy() {
-        if (!destroyed) {
+        if (destroyed.compareAndSet(false, true)) {
             hdWallet.destroy();
-            destroyed = true;
         }
     }
 
@@ -389,7 +401,7 @@ public final class AccountDeriver implements AutoCloseable {
      * 是否已销毁
      */
     public boolean isDestroyed() {
-        return destroyed;
+        return destroyed.get();
     }
 
     @Override
@@ -451,7 +463,7 @@ public final class AccountDeriver implements AutoCloseable {
     }
 
     private void checkNotDestroyed() {
-        if (destroyed) {
+        if (destroyed.get()) {
             throw new IllegalStateException("AccountDeriver has been destroyed");
         }
     }

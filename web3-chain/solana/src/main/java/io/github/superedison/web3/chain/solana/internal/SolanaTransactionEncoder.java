@@ -78,6 +78,9 @@ public final class SolanaTransactionEncoder implements TransactionEncoder<Solana
             List<Instruction> instructions = tx.getInstructions();
             writeCompactArrayLength(baos, instructions.size());
 
+            // 原始账户列表，用于将指令中的旧索引映射到公钥
+            List<AccountMeta> originalAccounts = tx.getAccounts();
+
             for (Instruction instruction : instructions) {
                 // 写入程序 ID 索引
                 String programIdHex = bytesToHex(instruction.programId());
@@ -85,13 +88,32 @@ public final class SolanaTransactionEncoder implements TransactionEncoder<Solana
                 if (programIdIndex == null) {
                     throw new IllegalStateException("Program ID not found in accounts: " + programIdHex);
                 }
+                if (programIdIndex < 0 || programIdIndex > 255) {
+                    throw new IllegalArgumentException("Program ID account index out of u8 range: " + programIdIndex);
+                }
                 baos.write(programIdIndex);
 
                 // 写入账户索引数组
+                // Bug 1 修复：指令中存储的是排序前原始列表的索引，需要通过公钥映射到排序后的新索引
+                // Bug 2 修复：添加 u8 范围校验（Solana 协议中账户索引为 u8）
                 List<Integer> accountIndices = instruction.accountIndices();
                 writeCompactArrayLength(baos, accountIndices.size());
-                for (Integer idx : accountIndices) {
-                    baos.write(idx);
+                for (Integer rawIdx : accountIndices) {
+                    if (rawIdx < 0 || rawIdx >= originalAccounts.size()) {
+                        throw new IllegalArgumentException(
+                                "Instruction account index out of bounds: " + rawIdx +
+                                ", accounts size: " + originalAccounts.size());
+                    }
+                    String pubkeyHex = bytesToHex(originalAccounts.get(rawIdx).pubkey());
+                    Integer newIdx = accountIndexMap.get(pubkeyHex);
+                    if (newIdx == null) {
+                        throw new IllegalStateException(
+                                "Account referenced by instruction not found in sorted account list: " + pubkeyHex);
+                    }
+                    if (newIdx < 0 || newIdx > 255) {
+                        throw new IllegalArgumentException("Account index out of u8 range: " + newIdx);
+                    }
+                    baos.write(newIdx);
                 }
 
                 // 写入指令数据
@@ -108,8 +130,15 @@ public final class SolanaTransactionEncoder implements TransactionEncoder<Solana
 
     /**
      * 编码已签名交易（用于广播）
+     *
+     * Bug 3 修复：接受已编码的 message 字节，避免对消息进行双重编码。
+     * 调用方（SolanaTransactionSigner）已调用 encodeMessage() 并用其进行签名，
+     * 直接将同一份 message 字节传入，确保签名与序列化内容严格一致。
+     *
+     * @param message   由 encodeMessage() 生成的消息字节
+     * @param signatures 签名数组（每个签名 64 字节）
      */
-    public byte[] encodeSigned(SolanaRawTransaction tx, byte[][] signatures) {
+    public byte[] encodeSigned(byte[] message, byte[][] signatures) {
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
@@ -119,8 +148,8 @@ public final class SolanaTransactionEncoder implements TransactionEncoder<Solana
                 baos.write(signature);
             }
 
-            // 写入消息
-            baos.write(encodeMessage(tx));
+            // 写入消息（直接使用已编码的消息字节，不再重复调用 encodeMessage）
+            baos.write(message);
 
             return baos.toByteArray();
         } catch (IOException e) {

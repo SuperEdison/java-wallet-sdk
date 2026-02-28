@@ -67,6 +67,10 @@ public final class Bech32 {
 
     /**
      * 解码 Bech32/Bech32m
+     *
+     * Bug 8 修复：90 字符限制只适用于 Bech32（BIP-173 / witness v0）。
+     * Bech32m（BIP-350 / witness v1+，包括 Taproot）不受此限制约束，
+     * 因此先完成解码，再根据实际编码类型决定是否强制长度上限。
      */
     public static DecodedBech32 decode(String str) {
         String lower = str.toLowerCase(Locale.ROOT);
@@ -79,7 +83,7 @@ public final class Bech32 {
         str = lower;
 
         int pos = str.lastIndexOf('1');
-        if (pos < 1 || pos + 7 > str.length() || str.length() > 90) {
+        if (pos < 1 || pos + 7 > str.length()) {
             throw new IllegalArgumentException("Invalid Bech32 format");
         }
 
@@ -98,6 +102,11 @@ public final class Bech32 {
         Encoding encoding = verifyChecksum(hrp, data);
         if (encoding == null) {
             throw new IllegalArgumentException("Invalid Bech32 checksum");
+        }
+
+        // 90 字符限制仅适用于 Bech32（witness v0 / BIP-173）
+        if (encoding == Encoding.BECH32 && str.length() > 90) {
+            throw new IllegalArgumentException("Bech32 string exceeds 90 character limit");
         }
 
         // 去除校验和

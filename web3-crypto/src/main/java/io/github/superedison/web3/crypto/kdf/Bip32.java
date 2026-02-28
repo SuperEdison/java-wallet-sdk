@@ -31,16 +31,20 @@ public final class Bip32 {
      */
     public static ExtendedKey masterKeyFromSeed(byte[] seed) {
         byte[] hmac = hmacSha512("Bitcoin seed".getBytes(StandardCharsets.UTF_8), seed);
-        byte[] privateKey = Arrays.copyOfRange(hmac, 0, 32);
-        byte[] chainCode = Arrays.copyOfRange(hmac, 32, 64);
+        try {
+            byte[] privateKey = Arrays.copyOfRange(hmac, 0, 32);
+            byte[] chainCode = Arrays.copyOfRange(hmac, 32, 64);
 
-        // 验证私钥有效性
-        BigInteger key = new BigInteger(1, privateKey);
-        if (key.equals(BigInteger.ZERO) || key.compareTo(N) >= 0) {
-            throw new IllegalStateException("Invalid master key derived");
+            // 验证私钥有效性
+            BigInteger key = new BigInteger(1, privateKey);
+            if (key.equals(BigInteger.ZERO) || key.compareTo(N) >= 0) {
+                throw new IllegalStateException("Invalid master key derived");
+            }
+
+            return new ExtendedKey(privateKey, chainCode, new int[0], 0);
+        } finally {
+            SecureBytes.secureWipe(hmac);
         }
-
-        return new ExtendedKey(privateKey, chainCode, new int[0], 0);
     }
 
     /**
@@ -67,27 +71,41 @@ public final class Bip32 {
             ByteBuffer.wrap(data, 33, 4).putInt(index);
         }
 
-        byte[] hmac = hmacSha512(parent.chainCode(), data);
-        byte[] il = Arrays.copyOfRange(hmac, 0, 32);
-        byte[] childChainCode = Arrays.copyOfRange(hmac, 32, 64);
+        try {
+            byte[] hmac = hmacSha512(parent.chainCode(), data);
+            try {
+                byte[] il = Arrays.copyOfRange(hmac, 0, 32);
+                byte[] childChainCode = Arrays.copyOfRange(hmac, 32, 64);
 
-        // 计算子私钥: (il + parentKey) mod n
-        BigInteger ilInt = new BigInteger(1, il);
-        BigInteger parentKeyInt = new BigInteger(1, parent.privateKey());
-        BigInteger childKeyInt = ilInt.add(parentKeyInt).mod(N);
+                // 计算子私钥: (il + parentKey) mod n
+                BigInteger ilInt = new BigInteger(1, il);
+                BigInteger parentKeyInt = new BigInteger(1, parent.privateKey());
+                BigInteger childKeyInt = ilInt.add(parentKeyInt).mod(N);
 
-        if (ilInt.compareTo(N) >= 0 || childKeyInt.equals(BigInteger.ZERO)) {
-            // 无效密钥，尝试下一个索引
-            return deriveChild(parent, index + 1);
+                if (ilInt.compareTo(N) >= 0 || childKeyInt.equals(BigInteger.ZERO)) {
+                    // 防止溢出：确保 index+1 不会跨越 hardened/non-hardened 边界
+                    int nextIndex = index + 1;
+                    boolean currentHardened = (index & 0x80000000) != 0;
+                    boolean nextHardened = (nextIndex & 0x80000000) != 0;
+                    if (currentHardened != nextHardened) {
+                        throw new IllegalStateException("BIP-32 key derivation: index overflow at boundary");
+                    }
+                    return deriveChild(parent, nextIndex);
+                }
+
+                byte[] childPrivateKey = SecureBytes.padLeft(childKeyInt.toByteArray(), 32);
+
+                int[] newPath = new int[parent.path().length + 1];
+                System.arraycopy(parent.path(), 0, newPath, 0, parent.path().length);
+                newPath[newPath.length - 1] = index;
+
+                return new ExtendedKey(childPrivateKey, childChainCode, newPath, parent.depth() + 1);
+            } finally {
+                SecureBytes.secureWipe(hmac);
+            }
+        } finally {
+            SecureBytes.secureWipe(data);
         }
-
-        byte[] childPrivateKey = SecureBytes.padLeft(childKeyInt.toByteArray(), 32);
-
-        int[] newPath = new int[parent.path().length + 1];
-        System.arraycopy(parent.path(), 0, newPath, 0, parent.path().length);
-        newPath[newPath.length - 1] = index;
-
-        return new ExtendedKey(childPrivateKey, childChainCode, newPath, parent.depth() + 1);
     }
 
     /**
@@ -100,7 +118,11 @@ public final class Bip32 {
         int[] indices = parsePath(path);
         ExtendedKey current = master;
         for (int index : indices) {
-            current = deriveChild(current, index);
+            ExtendedKey next = deriveChild(current, index);
+            if (current != master) {
+                current.destroy();
+            }
+            current = next;
         }
         return current;
     }
@@ -109,7 +131,12 @@ public final class Bip32 {
      * 从种子按路径派生密钥
      */
     public static ExtendedKey derivePath(byte[] seed, String path) {
-        return derivePath(masterKeyFromSeed(seed), path);
+        ExtendedKey master = masterKeyFromSeed(seed);
+        try {
+            return derivePath(master, path);
+        } finally {
+            master.destroy();
+        }
     }
 
     /**
@@ -248,7 +275,7 @@ public final class Bip32 {
          */
         public void destroy() {
             SecureBytes.secureWipe(privateKey);
-            SecureBytes.wipe(chainCode);
+            SecureBytes.secureWipe(chainCode);
             destroyed = true;
         }
 

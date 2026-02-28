@@ -153,7 +153,7 @@ public final class DerivedKey implements AutoCloseable {
     public void destroy() {
         if (!destroyed) {
             SecureBytes.secureWipe(privateKey);
-            SecureBytes.wipe(chainCode);
+            SecureBytes.secureWipe(chainCode);
             destroyed = true;
         }
     }

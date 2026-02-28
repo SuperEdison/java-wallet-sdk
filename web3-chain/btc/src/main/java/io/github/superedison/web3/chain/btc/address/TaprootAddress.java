@@ -218,22 +218,22 @@ public final class TaprootAddress extends BtcAddress {
      * P + t*G where t = tagged_hash("TapTweak", P)
      */
     private static byte[] computeTweakedPublicKey(byte[] xOnlyPubKey, byte[] tweak) {
+        // 使用 BouncyCastle 进行椭圆曲线运算
+        org.bouncycastle.asn1.x9.X9ECParameters curveParams =
+                org.bouncycastle.crypto.ec.CustomNamedCurves.getByName("secp256k1");
+        org.bouncycastle.math.ec.ECPoint G = curveParams.getG();
+        org.bouncycastle.math.ec.ECCurve curve = curveParams.getCurve();
+
+        // 从 x-only 公钥恢复点（假设 y 坐标为偶数）
+        java.math.BigInteger x = new java.math.BigInteger(1, xOnlyPubKey);
+        org.bouncycastle.math.ec.ECPoint P = liftX(curve, x);
+
+        // Bug 5 修复：无法恢复曲线点时抛出异常，不静默回退
+        if (P == null) {
+            throw new AddressException("Failed to lift x-coordinate to curve point");
+        }
+
         try {
-            // 使用 BouncyCastle 进行椭圆曲线运算
-            org.bouncycastle.asn1.x9.X9ECParameters curveParams =
-                    org.bouncycastle.crypto.ec.CustomNamedCurves.getByName("secp256k1");
-            org.bouncycastle.math.ec.ECPoint G = curveParams.getG();
-            org.bouncycastle.math.ec.ECCurve curve = curveParams.getCurve();
-
-            // 从 x-only 公钥恢复点（假设 y 坐标为偶数）
-            java.math.BigInteger x = new java.math.BigInteger(1, xOnlyPubKey);
-            org.bouncycastle.math.ec.ECPoint P = liftX(curve, x);
-
-            if (P == null) {
-                // 如果无法恢复点，返回原始公钥
-                return xOnlyPubKey;
-            }
-
             // 计算 t * G
             java.math.BigInteger t = new java.math.BigInteger(1, tweak);
             t = t.mod(curveParams.getN()); // 确保 t 在有效范围内
@@ -257,8 +257,8 @@ public final class TaprootAddress extends BtcAddress {
             return result;
 
         } catch (Exception e) {
-            // 如果椭圆曲线运算失败，返回原始公钥
-            return xOnlyPubKey;
+            // Bug 5 修复：椭圆曲线运算失败时抛出异常，不静默回退
+            throw new AddressException("Taproot key tweak failed", e);
         }
     }
 

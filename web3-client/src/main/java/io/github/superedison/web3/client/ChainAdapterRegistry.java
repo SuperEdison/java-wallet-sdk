@@ -66,7 +66,7 @@ public final class ChainAdapterRegistry {
      * 从 ServiceLoader 自动发现并注册适配器
      */
     @SuppressWarnings("rawtypes")
-    public ChainAdapterRegistry autoDiscover() {
+    public synchronized ChainAdapterRegistry autoDiscover() {
         ServiceLoader<ChainAdapter> loader = ServiceLoader.load(ChainAdapter.class);
         for (ChainAdapter adapter : loader) {
             register(adapter);

@@ -30,9 +30,13 @@ public final class Slip10 {
             case ED25519 -> ED25519_SEED_KEY;
         };
         byte[] i = hmacSha512(key.getBytes(StandardCharsets.UTF_8), seed);
-        byte[] kL = Arrays.copyOfRange(i, 0, 32);
-        byte[] chainCode = Arrays.copyOfRange(i, 32, 64);
-        return new ExtendedKey(curve, kL, chainCode, new int[0], 0);
+        try {
+            byte[] kL = Arrays.copyOfRange(i, 0, 32);
+            byte[] chainCode = Arrays.copyOfRange(i, 32, 64);
+            return new ExtendedKey(curve, kL, chainCode, new int[0], 0);
+        } finally {
+            SecureBytes.secureWipe(i);
+        }
     }
 
     /**
@@ -43,17 +47,25 @@ public final class Slip10 {
             throw new IllegalArgumentException("SLIP-0010 Ed25519 only supports hardened derivation");
         }
         byte[] data = new byte[1 + 32 + 4];
-        data[0] = 0x00;
-        System.arraycopy(parent.getKey(), 0, data, 1, 32);
-        ByteBuffer.wrap(data, 33, 4).putInt(index);
+        try {
+            data[0] = 0x00;
+            System.arraycopy(parent.getKey(), 0, data, 1, 32);
+            ByteBuffer.wrap(data, 33, 4).putInt(index);
 
-        byte[] i = hmacSha512(parent.getChainCode(), data);
-        byte[] childKey = Arrays.copyOfRange(i, 0, 32);
-        byte[] childChainCode = Arrays.copyOfRange(i, 32, 64);
+            byte[] i = hmacSha512(parent.getChainCode(), data);
+            try {
+                byte[] childKey = Arrays.copyOfRange(i, 0, 32);
+                byte[] childChainCode = Arrays.copyOfRange(i, 32, 64);
 
-        int[] newPath = Arrays.copyOf(parent.path(), parent.path().length + 1);
-        newPath[newPath.length - 1] = index;
-        return new ExtendedKey(parent.getCurve(), childKey, childChainCode, newPath, parent.depth() + 1);
+                int[] newPath = Arrays.copyOf(parent.path(), parent.path().length + 1);
+                newPath[newPath.length - 1] = index;
+                return new ExtendedKey(parent.getCurve(), childKey, childChainCode, newPath, parent.depth() + 1);
+            } finally {
+                SecureBytes.secureWipe(i);
+            }
+        } finally {
+            SecureBytes.secureWipe(data);
+        }
     }
 
     /**
@@ -63,7 +75,11 @@ public final class Slip10 {
         int[] indices = Bip32.parsePath(path); // 复用解析逻辑
         ExtendedKey current = master;
         for (int index : indices) {
-            current = deriveChild(current, index);
+            ExtendedKey next = deriveChild(current, index);
+            if (current != master) {
+                current.destroy();
+            }
+            current = next;
         }
         return current;
     }
@@ -132,7 +148,7 @@ public final class Slip10 {
 
         public void destroy() {
             SecureBytes.secureWipe(key);
-            SecureBytes.wipe(chainCode);
+            SecureBytes.secureWipe(chainCode);
             destroyed = true;
         }
 

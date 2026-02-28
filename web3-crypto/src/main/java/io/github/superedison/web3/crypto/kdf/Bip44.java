@@ -79,7 +79,7 @@ public final class Bip44 {
      * Solana 使用硬化的地址索引
      */
     public static String getSolanaPath(int addressIndex) {
-        return String.format("m/44'/%d'/%d'/%d'", COIN_TYPE_SOL, addressIndex, 0);
+        return String.format("m/44'/%d'/0'/%d'", COIN_TYPE_SOL, addressIndex);
     }
 
     /**
