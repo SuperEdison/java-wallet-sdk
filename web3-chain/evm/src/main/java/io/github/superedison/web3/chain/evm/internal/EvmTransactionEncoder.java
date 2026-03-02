@@ -30,11 +30,9 @@ public final class EvmTransactionEncoder implements TransactionEncoder<EvmRawTra
         fields.add(RlpEncoder.encodeBigInteger(tx.getValue()));
         fields.add(RlpEncoder.encodeBytes(tx.getData()));
 
-        if (tx.getChainId() > 0) {
-            fields.add(RlpEncoder.encodeLong(tx.getChainId()));
-            fields.add(RlpEncoder.encodeBigInteger(BigInteger.ZERO));
-            fields.add(RlpEncoder.encodeBigInteger(BigInteger.ZERO));
-        }
+        fields.add(RlpEncoder.encodeLong(tx.getChainId()));
+        fields.add(RlpEncoder.encodeBigInteger(BigInteger.ZERO));
+        fields.add(RlpEncoder.encodeBigInteger(BigInteger.ZERO));
 
         return RlpEncoder.encodeList(fields);
     }

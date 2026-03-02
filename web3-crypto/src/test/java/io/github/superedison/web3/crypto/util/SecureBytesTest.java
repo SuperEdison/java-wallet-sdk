@@ -214,7 +214,6 @@ class SecureBytesTest {
             assertThat(random).hasSize(32);
         }
 
-        @Test
         @DisplayName("两次调用应该返回不同的结果")
         @RepeatedTest(5)
         void randomBytesDifferent() {

@@ -2,6 +2,7 @@ package io.github.superedison.web3.chain.evm.internal;
 
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
+import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -26,7 +27,7 @@ public final class EvmSignature implements Signature {
      * 从 recoveryId 创建 (recoveryId: 0/1 -> v: 27/28)
      */
     public static EvmSignature fromRecoveryId(byte[] r, byte[] s, int recoveryId) {
-        return new EvmSignature(padTo32(r), padTo32(s), (long) recoveryId + 27);
+        return new EvmSignature(padTo32(r), padTo32(s), Secp256k1VNormalizer.toLegacyV(recoveryId));
     }
 
     /**
@@ -69,13 +70,7 @@ public final class EvmSignature implements Signature {
     }
 
     public int getRecoveryId() {
-        if (v == 0 || v == 1) {
-            return (int) v;        // 原始 recId（来自 Secp256k1Signature.toCompact()）
-        }
-        if (v >= 35) {
-            return (int) ((v - 35) % 2);  // EIP-155 编码
-        }
-        return (int) (v - 27);     // legacy 27/28 格式
+        return Secp256k1VNormalizer.toRecoveryId(v);
     }
 
     public BigInteger getRBigInt() {
@@ -90,7 +85,7 @@ public final class EvmSignature implements Signature {
      * 转换为 EIP-155 签名
      */
     public EvmSignature toEip155(long chainId) {
-        long newV = chainId * 2 + 35 + getRecoveryId();
+        long newV = Secp256k1VNormalizer.toEip155V(v, chainId);
         return new EvmSignature(r, s, newV);
     }
 

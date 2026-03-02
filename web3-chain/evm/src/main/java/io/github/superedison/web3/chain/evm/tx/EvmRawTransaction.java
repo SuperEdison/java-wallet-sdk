@@ -117,6 +117,9 @@ public final class EvmRawTransaction implements RawTransaction {
         }
 
         public Builder chainId(long chainId) {
+            if (chainId <= 0) {
+                throw new IllegalArgumentException("chainId must be positive for EIP-155 transactions");
+            }
             this.chainId = chainId;
             return this;
         }

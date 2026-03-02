@@ -61,6 +61,7 @@ class AccountDeriverTest {
                 String userId = "random_user_" + i;
                 int index = AccountDeriver.userIdToAccountIndex(userId);
                 assertThat(index).isGreaterThanOrEqualTo(0);
+                assertThat(index).isLessThanOrEqualTo(Integer.MAX_VALUE);
             }
         }
 
@@ -184,6 +185,31 @@ class AccountDeriverTest {
                 String address2 = deriver2.deriveAddress("user_1", ChainType.EVM);
 
                 assertThat(address1).isNotEqualTo(address2);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("fromSeed 派生测试")
+    class FromSeedDeriveTest {
+
+        @Test
+        @DisplayName("同一 master seed 创建多个 deriver 应产生一致地址")
+        void sameSeedMultipleDeriversShouldProduceSameAddress() {
+            byte[] seed = Bip39.mnemonicToSeed(TEST_MNEMONIC, "");
+            byte[] seedCopy = Arrays.copyOf(seed, seed.length);
+
+            try (AccountDeriver deriverA = AccountDeriver.fromSeed(seed);
+                 AccountDeriver deriverB = AccountDeriver.fromSeed(seedCopy)) {
+                Arrays.fill(seed, (byte) 0); // 验证外部修改不会影响已创建实例
+
+                String evmA = deriverA.deriveAddress("user_seed", ChainType.EVM);
+                String evmB = deriverB.deriveAddress("user_seed", ChainType.EVM);
+                String solA = deriverA.deriveAddress("user_seed", ChainType.SOL);
+                String solB = deriverB.deriveAddress("user_seed", ChainType.SOL);
+
+                assertThat(evmA).isEqualTo(evmB);
+                assertThat(solA).isEqualTo(solB);
             }
         }
     }

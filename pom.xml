@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.superedison</groupId>
     <artifactId>java-wallet-sdk</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
     <name>Java Version Web3 Wallet SDK</name>
     <description>Modular web3 wallet SDK for Java: core semantics, crypto primitives, chain adapters, and client
         facade.
@@ -158,3 +158,5 @@
     </build>
 
 </project>
+
+

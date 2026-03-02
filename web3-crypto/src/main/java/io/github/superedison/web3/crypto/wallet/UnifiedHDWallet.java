@@ -87,7 +87,11 @@ public final class UnifiedHDWallet implements AutoCloseable {
 
         String pass = passphrase != null ? passphrase : "";
         byte[] seed = Bip39.mnemonicToSeed(mnemonic, pass);
-        return new UnifiedHDWallet(mnemonic, pass, seed);
+        try {
+            return new UnifiedHDWallet(mnemonic, pass, seed);
+        } finally {
+            SecureBytes.secureWipe(seed);
+        }
     }
 
     /**
@@ -341,7 +345,12 @@ public final class UnifiedHDWallet implements AutoCloseable {
         if (lastSlash == -1) {
             return basePath + "/" + index;
         }
-        return basePath.substring(0, lastSlash + 1) + index;
+        String lastSegment = basePath.substring(lastSlash + 1);
+        String hardenedSuffix = "";
+        if (lastSegment.endsWith("'") || lastSegment.endsWith("H")) {
+            hardenedSuffix = lastSegment.substring(lastSegment.length() - 1);
+        }
+        return basePath.substring(0, lastSlash + 1) + index + hardenedSuffix;
     }
 
     @Override

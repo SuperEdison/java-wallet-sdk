@@ -2,6 +2,7 @@ package io.github.superedison.web3.chain.tron.internal;
 
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
+import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -39,8 +40,8 @@ public final class TronSignature implements Signature {
         if (recoveryId < 0 || recoveryId > 3) {
             throw new IllegalArgumentException("recoveryId must be 0-3");
         }
-        // TRON 使用 27/28 作为 v 值
-        int v = 27 + recoveryId;
+        // TRON 统一使用 27/28，若输入 2/3 则按奇偶折叠到 0/1
+        int v = Secp256k1VNormalizer.toLegacyV(recoveryId);
         return new TronSignature(Arrays.copyOf(r, 32), Arrays.copyOf(s, 32), v);
     }
 
@@ -56,8 +57,8 @@ public final class TronSignature implements Signature {
         byte[] r = Arrays.copyOfRange(signature, 0, 32);
         byte[] s = Arrays.copyOfRange(signature, 32, 64);
         int rawV = signature[64] & 0xFF;
-        // 归一化：recoveryId (0/1) 映射为 TRON 标准 v (27/28)
-        int v = (rawV == 0 || rawV == 1) ? rawV + 27 : rawV;
+        // 统一归一化到 TRON 标准 v (27/28)
+        int v = Secp256k1VNormalizer.toLegacyV(rawV);
         return new TronSignature(r, s, v);
     }
 
@@ -100,7 +101,7 @@ public final class TronSignature implements Signature {
      * 获取恢复 ID (0-3)
      */
     public int getRecoveryId() {
-        return v - 27;
+        return Secp256k1VNormalizer.toRecoveryId(v);
     }
 
     public BigInteger getRBigInt() {
