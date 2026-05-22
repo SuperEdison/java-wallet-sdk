@@ -1,7 +1,10 @@
 package io.github.superedison.web3.chain.evm.address;
 
+import io.github.superedison.web3.chain.evm.internal.EvmSignature;
 import io.github.superedison.web3.chain.exception.AddressException;
+import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.wallet.Address;
+import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 import io.github.superedison.web3.crypto.hash.Keccak256;
 
 import java.util.Arrays;
@@ -54,6 +57,36 @@ public final class EvmAddress implements Address {
         }
         byte[] hash = Keccak256.hash(key);
         return new EvmAddress(Arrays.copyOfRange(hash, 12, 32));
+    }
+
+    /**
+     * 从消息哈希 + 65 字节签名反算签名者地址（ecrecover）。
+     *
+     * 自动处理三种 v 形式：
+     *   - 原始 recoveryId (0 / 1)
+     *   - Ethereum legacy (27 / 28)
+     *   - EIP-155 (chainId * 2 + 35 / 36)
+     *
+     * @param hash 32 字节消息哈希（EIP-191 / EIP-712 / 裸 tx hash 由调用方决定）
+     * @param signature 65 字节紧凑签名 (r || s || v)
+     * @throws AddressException 若无法从签名恢复公钥
+     */
+    public static EvmAddress recover(byte[] hash, byte[] signature) {
+        if (hash == null || hash.length != 32) {
+            throw new IllegalArgumentException("hash must be 32 bytes");
+        }
+        EvmSignature sig = EvmSignature.fromCompact(signature);
+        byte[] pubkey = Secp256k1Signer.recoverPublicKey(
+                hash, sig.getR(), sig.getS(), sig.getRecoveryId());
+        if (pubkey == null) {
+            throw new AddressException("Failed to recover public key from signature");
+        }
+        return fromPublicKey(pubkey);
+    }
+
+    /** {@link #recover(byte[], byte[])} 的 Signature 重载。 */
+    public static EvmAddress recover(byte[] hash, Signature signature) {
+        return recover(hash, signature.bytes());
     }
 
     /**

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.github.superedison</groupId>
+        <artifactId>java-wallet-sdk</artifactId>
+        <version>0.1.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>web3-kms</artifactId>
+    <name>Web3 Wallet KMS</name>
+    <description>
+        Cloud KMS-backed hot wallet signing for the Web3 Wallet SDK. 0.1.0 implements SigningKey on top of AWS KMS for secp256k1 (EVM/Tron) and Ed25519 (Solana) without exposing private key material. Google Cloud KMS / Azure Key Vault are planned for later releases.
+    </description>
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <aws.sdk.version>2.44.11</aws.sdk.version>
+    </properties>
+
+    <dependencies>
+        <!-- Core: SigningKey / Signature / SignatureScheme abstractions -->
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Crypto: DER parsing, secp256k1 helpers, public-key utilities -->
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-crypto</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- AWS KMS (optional: only required when using AwsKms* signing keys) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kms</artifactId>
+            <version>${aws.sdk.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Mock KmsClient for end-to-end signing round-trip tests, without hitting AWS.
+             Pin recent enough for Java 25 ByteBuddy support. -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.21.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- HTTP client for the optional live AWS integration test (tagged "integration",
+             skipped unless env vars are set). Lightweight, JDK-native, no commons-logging. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+            <version>${aws.sdk.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Chain address utilities, test-only: lets the live integration test report
+             EVM / TRON addresses derived from the real KMS public key. -->
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-chain-evm</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.superedison</groupId>
+            <artifactId>web3-chain-tron</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

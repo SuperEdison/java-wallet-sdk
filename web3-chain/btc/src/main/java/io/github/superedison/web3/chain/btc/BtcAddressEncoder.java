@@ -54,7 +54,13 @@ public final class BtcAddressEncoder implements AddressEncoder {
             case P2SH_P2WPKH -> P2SHAddress.fromPublicKeyP2WPKH(publicKey, network).toBase58();
             case P2WPKH -> Bech32Address.p2wpkhFromPublicKey(publicKey, network).toBech32();
             case P2WSH -> throw new IllegalArgumentException("P2WSH requires script, not public key");
-            case P2TR -> TaprootAddress.fromPublicKey(publicKey, network).toBech32m();
+            // 0.1.0 暂不开放 P2TR：派生地址容易，但 BIP-340 Schnorr / BIP-341 sighash 还没实现，
+            // 派生出 bc1p... 地址会让用户收币后花不出去。完整 Taproot 支持留到 0.2.0。
+            // 低层工具 TaprootAddress.fromPublicKey 仍可用，用户自担风险。
+            case P2TR -> throw new UnsupportedOperationException(
+                    "P2TR (Taproot) address derivation is disabled in 0.1.0: signing is not yet implemented "
+                            + "(BIP-340 Schnorr + BIP-341 sighash). Funds sent to a derived bc1p... address "
+                            + "would be unspendable. Use P2WPKH instead, or wait for 0.2.0.");
         };
     }
 

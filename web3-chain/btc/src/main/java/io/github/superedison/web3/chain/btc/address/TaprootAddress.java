@@ -157,7 +157,7 @@ public final class TaprootAddress extends BtcAddress {
 
     /**
      * 获取脚本公钥（ScriptPubKey）
-     * OP_1 <32 bytes output key>
+     * OP_1 &lt;32 bytes output key&gt;
      */
     public byte[] getScriptPubKey() {
         byte[] script = new byte[34];

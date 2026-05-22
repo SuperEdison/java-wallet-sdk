@@ -4,19 +4,33 @@ import io.github.superedison.web3.chain.evm.address.EvmAddress;
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
 import io.github.superedison.web3.core.signer.Signer;
+import io.github.superedison.web3.core.signer.SigningKey;
 import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 
 /**
- * EVM 签名器，实现 Signer 接口。
+ * EVM 签名器，实现 {@link Signer}。
+ *
+ * 非拥有式：构造时收一个 {@link SigningKey}，**不接管其生命周期**。
+ * destroy() 只标记本对象，不会传递到底层——这样允许多个 Signer 共享同一个 KMS Key。
+ *
+ * 本地用：{@code new EvmSigner(new Secp256k1Signer(privateKey))}
+ * KMS 用：{@code new EvmSigner(awsKmsSecp256k1Key)}
  */
 public final class EvmSigner implements Signer {
 
     private final EvmAddress address;
-    private final Secp256k1Signer signingKey;
+    private final SigningKey signingKey;
     private volatile boolean destroyed = false;
 
-    public EvmSigner(byte[] privateKey) {
-        this.signingKey = new Secp256k1Signer(privateKey);
+    public EvmSigner(SigningKey signingKey) {
+        if (signingKey == null) {
+            throw new IllegalArgumentException("signingKey must not be null");
+        }
+        if (signingKey.getScheme() != SignatureScheme.ECDSA_SECP256K1) {
+            throw new IllegalArgumentException(
+                    "EvmSigner requires ECDSA_SECP256K1, got " + signingKey.getScheme());
+        }
+        this.signingKey = signingKey;
         this.address = EvmAddress.fromPublicKey(signingKey.getPublicKey());
     }
 
@@ -47,10 +61,7 @@ public final class EvmSigner implements Signer {
 
     @Override
     public void destroy() {
-        if (!destroyed) {
-            signingKey.destroy();
-            destroyed = true;
-        }
+        destroyed = true;
     }
 
     @Override
@@ -59,13 +70,13 @@ public final class EvmSigner implements Signer {
     }
 
     private void checkNotDestroyed() {
-        if (destroyed || signingKey.isDestroyed()) {
+        if (isDestroyed()) {
             throw new IllegalStateException("Signer has been destroyed");
         }
     }
 
     @Override
     public String toString() {
-        return "EvmSigner{***REDACTED***}";
+        return "EvmSigner{address=" + address + "}";
     }
 }

@@ -1,7 +1,10 @@
 package io.github.superedison.web3.chain.tron.address;
 
 import io.github.superedison.web3.chain.exception.AddressException;
+import io.github.superedison.web3.chain.tron.internal.TronSignature;
+import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.wallet.Address;
+import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 import io.github.superedison.web3.crypto.hash.Keccak256;
 
 import java.util.Arrays;
@@ -106,6 +109,31 @@ public final class TronAddress implements Address {
         System.arraycopy(addressBody, 0, address, 1, BODY_LENGTH);
 
         return new TronAddress(address);
+    }
+
+    /**
+     * 从消息哈希 + 65 字节签名反算签名者地址（ecrecover）。
+     *
+     * @param hash 32 字节消息哈希
+     * @param signature 65 字节紧凑签名 (r || s || v)
+     * @throws AddressException 若无法从签名恢复公钥
+     */
+    public static TronAddress recover(byte[] hash, byte[] signature) {
+        if (hash == null || hash.length != 32) {
+            throw new IllegalArgumentException("hash must be 32 bytes");
+        }
+        TronSignature sig = TronSignature.fromCompact(signature);
+        byte[] pubkey = Secp256k1Signer.recoverPublicKey(
+                hash, sig.getR(), sig.getS(), sig.getRecoveryId());
+        if (pubkey == null) {
+            throw new AddressException("Failed to recover public key from signature");
+        }
+        return fromPublicKey(pubkey);
+    }
+
+    /** {@link #recover(byte[], byte[])} 的 Signature 重载。 */
+    public static TronAddress recover(byte[] hash, Signature signature) {
+        return recover(hash, signature.bytes());
     }
 
     /**

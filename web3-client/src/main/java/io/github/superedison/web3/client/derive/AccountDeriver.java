@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 支持从一个助记词/种子派生所有链的地址：
  * - EVM (Ethereum, Polygon, BSC 等)
  * - TRON
- * - BTC (P2PKH, P2SH-P2WPKH, P2WPKH, P2TR)
+ * - BTC (P2PKH, P2SH-P2WPKH, P2WPKH)；P2TR 派生 + 签名计划于 0.2.0 提供，
+ *   当前调用 P2TR 的派生入口会抛 {@link UnsupportedOperationException}。
  * - Solana
  *
  * 核心能力：
@@ -46,9 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *         Signature sig = result.signingKey().sign(txHash);
  *     }
  *
- *     // BTC Taproot 地址
+ *     // BTC Native SegWit 地址（P2TR 派生计划于 0.2.0 提供，0.1.0 调用会抛 UnsupportedOperationException）
  *     DeriveOptions opts = DeriveOptions.builder()
- *         .btcAddressType(BtcAddressType.P2TR)
+ *         .btcAddressType(BtcAddressType.P2WPKH)
  *         .build();
  *     String btcAddress = deriver.deriveAddress("user123", ChainType.BTC, opts);
  *
@@ -381,7 +382,10 @@ public final class AccountDeriver implements AutoCloseable {
             case P2PKH -> 44;
             case P2SH_P2WPKH -> 49;
             case P2WPKH, P2WSH -> 84;
-            case P2TR -> 86;
+            // 0.1.0 暂不开放 P2TR：与 BtcAddressEncoder 对齐，防止派生出花不出去的地址。
+            case P2TR -> throw new UnsupportedOperationException(
+                    "P2TR (Taproot) derivation is disabled in 0.1.0: signing is not yet implemented "
+                            + "(BIP-340 Schnorr + BIP-341 sighash). Use P2WPKH instead, or wait for 0.2.0.");
         };
         return String.format("m/%d'/0'/%d'/%d/%d", purpose, accountIndex, change, addressIndex);
     }

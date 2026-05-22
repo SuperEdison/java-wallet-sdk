@@ -25,7 +25,7 @@ public final class P2SHAddress extends BtcAddress {
      * 步骤：
      * 1. 压缩公钥
      * 2. 计算 HASH160(公钥) = witnessProgram
-     * 3. 创建 redeemScript: OP_0 <20 bytes witnessProgram>
+     * 3. 创建 redeemScript: OP_0 &lt;20 bytes witnessProgram&gt;
      * 4. 计算 HASH160(redeemScript)
      */
     public static P2SHAddress fromPublicKeyP2WPKH(byte[] publicKey, BtcNetwork network) {
@@ -114,7 +114,7 @@ public final class P2SHAddress extends BtcAddress {
 
     /**
      * 获取脚本公钥（ScriptPubKey）
-     * OP_HASH160 <20 bytes> OP_EQUAL
+     * OP_HASH160 &lt;20 bytes&gt; OP_EQUAL
      */
     public byte[] getScriptPubKey() {
         byte[] script = new byte[23];

@@ -28,6 +28,16 @@ public final class SolanaTransactionSigner implements TransactionSigner<SolanaRa
         // 编码消息
         byte[] message = encoder.encodeMessage(tx);
 
+        // 0.1.0 仅支持单 signer。message[0] 即 numRequiredSignatures（消息头第一字节）；
+        // 若 > 1，直接签出来会因签名数与消息头不一致而被节点拒绝。多 signer API 留到 0.2.0。
+        int numRequiredSignatures = message[0] & 0xFF;
+        if (numRequiredSignatures != 1) {
+            throw new UnsupportedOperationException(
+                    "Solana single-signer transactions only (got " + numRequiredSignatures
+                            + " required signatures). Multi-signer support is planned for 0.2.0; "
+                            + "for now, ensure the transaction has exactly one account with isSigner=true.");
+        }
+
         // 签名（Ed25519 直接对消息签名，不需要预哈希）
         Signature sig = key.sign(message);
         byte[] signatureBytes = sig.bytes();

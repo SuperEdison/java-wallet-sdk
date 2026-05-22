@@ -1,6 +1,6 @@
 # Web3 Wallet SDK (Java 21+)
 
-模块化、安全优先的 Web3 钱包 SDK。支持 EVM、TRON、Bitcoin（全地址类型）和 Solana，提供可扩展的链 SPI 和密码学原语。
+模块化、安全优先的 Web3 钱包 SDK。支持 EVM、TRON、Bitcoin（P2PKH / P2SH-P2WPKH / P2WPKH）和 Solana，提供可扩展的链 SPI 和密码学原语。除本地 HD 钱包外，还可通过 **AWS KMS** 托管私钥，做生产级热钱包。Bitcoin Taproot (P2TR) 签名计划于 0.2.0 提供。
 
 ## 许可证
 
@@ -48,6 +48,14 @@ MIT 许可。可免费用于钱包、交易所、SaaS 及其他商业产品。
     <artifactId>web3-chain-solana</artifactId>
     <version>latest</version>
 </dependency>
+
+<!-- 可选：AWS KMS 托管签名（生产热钱包） -->
+<dependency>
+    <groupId>io.github.superedison</groupId>
+    <artifactId>web3-kms</artifactId>
+    <version>latest</version>
+</dependency>
+<!-- 同时在你自己的 pom 加上 AWS SDK 及任意一种 HTTP 客户端，详见下面的"云 KMS 热钱包"章节 -->
 ```
 
 ---
@@ -62,16 +70,17 @@ MIT 许可。可免费用于钱包、交易所、SaaS 及其他商业产品。
 | web3-chain-spi | 链 SPI（ChainAdapter, ChainType, AddressEncoder） |
 | web3-chain-evm | EVM 实现（RLP 编码, Keccak 哈希, secp256k1 签名） |
 | web3-chain-tron | TRON 实现（Protobuf 编码, SHA256 txid, secp256k1 签名） |
-| web3-chain-btc | Bitcoin 实现（P2PKH, P2SH, SegWit, Taproot） |
+| web3-chain-btc | Bitcoin 实现（P2PKH, P2SH-P2WPKH, P2WPKH；Taproot 0.2.0） |
 | web3-chain-solana | Solana 实现（Ed25519 签名, Base58 地址） |
 | web3-client | 入口 + 适配器注册表 + AccountDeriver |
+| web3-kms | 云 KMS 托管签名（AWS KMS：secp256k1 / Ed25519），私钥不出云 |
 
 依赖方向（单向）：
 ```
-web3-client
-  └─► web3-chain-evm / web3-chain-tron / web3-chain-btc / web3-chain-solana
-          └─► web3-chain-spi ──► web3-core
-                                └─► web3-crypto
+web3-client                                      web3-kms（可选）
+  └─► web3-chain-evm / -tron / -btc / -solana       │
+          └─► web3-chain-spi ──► web3-core ◄────────┤
+                                └─► web3-crypto ◄───┘
 ```
 
 ---
@@ -130,13 +139,18 @@ try (AccountDeriver deriver = AccountDeriver.fromMnemonic(mnemonic)) {
     String btcSegwit = deriver.deriveAddress("user123", ChainType.BTC);
     System.out.println("BTC SegWit: " + btcSegwit);  // bc1q...
 
-    // Taproot (P2TR)
-    DeriveOptions taprootOpts = DeriveOptions.builder()
-        .btcAddressType(BtcAddressType.P2TR)
+    // Wrapped SegWit (P2SH-P2WPKH)
+    DeriveOptions wrappedOpts = DeriveOptions.builder()
+        .btcAddressType(BtcAddressType.P2SH_P2WPKH)
         .btcNetwork(BtcNetwork.MAINNET)
         .build();
-    String btcTaproot = deriver.deriveAddress("user123", ChainType.BTC, taprootOpts);
-    System.out.println("BTC Taproot: " + btcTaproot);  // bc1p...
+    String btcWrapped = deriver.deriveAddress("user123", ChainType.BTC, wrappedOpts);
+    System.out.println("BTC Wrapped SegWit: " + btcWrapped);  // 3...
+
+    // Taproot (P2TR) — ⏳ 0.2.0
+    // 派生入口已禁用：完整 BIP-340 Schnorr / BIP-341 sighash 签名能力计划于 0.2.0 提供。
+    // 0.1.0 调用 deriver.deriveAddress(..., P2TR) 会抛 UnsupportedOperationException，
+    // 避免派生出 bc1p... 但花不出去的地址。
 
     // Legacy (P2PKH)
     DeriveOptions legacyOpts = DeriveOptions.builder()
@@ -207,11 +221,14 @@ String solPath = AccountDeriver.getPathForChain(ChainType.SOL, 0);
 // m/44'/501'/0'/0' (Ed25519 使用硬化路径)
 
 // 获取 BTC 特定地址类型的路径
-String btcTaprootPath = AccountDeriver.getPathForBtcType(BtcAddressType.P2TR, 0);
-// m/86'/0'/0'/0/0
-
 String btcSegwitPath = AccountDeriver.getPathForBtcType(BtcAddressType.P2WPKH, 0);
 // m/84'/0'/0'/0/0
+
+String btcWrappedPath = AccountDeriver.getPathForBtcType(BtcAddressType.P2SH_P2WPKH, 0);
+// m/49'/0'/0'/0/0
+
+// P2TR (Taproot) 路径在 0.1.0 暂未开放——getPathForBtcType(P2TR, ...) 会抛
+// UnsupportedOperationException，与派生入口保持一致。
 ```
 
 ---
@@ -272,9 +289,8 @@ public void generateUserAddresses(byte[] seed) {
         Bech32Address bech32 = Bech32Address.p2wpkhFromPublicKey(pubKey, BtcNetwork.MAINNET);
         System.out.println("BTC Native SegWit (P2WPKH): " + bech32.toBech32());
 
-        // Taproot P2TR（以 'bc1p' 开头）
-        TaprootAddress taproot = TaprootAddress.fromPublicKey(pubKey, BtcNetwork.MAINNET);
-        System.out.println("BTC Taproot (P2TR): " + taproot.toBech32m());
+        // ⚠️ Taproot P2TR：低层工具类 TaprootAddress 仍可用于解析 / 实验，
+        // 但 0.1.0 的 BtcChainAdapter 还无法签名 P2TR 输入。生产请等 0.2.0。
     }
 
     // ========== Solana ==========
@@ -296,11 +312,11 @@ byte[] privateKey = new byte[32]; // 你的 32 字节私钥
 try (Secp256k1Signer signer = new Secp256k1Signer(privateKey)) {
     byte[] pubKey = signer.getCompressedPublicKey();
 
-    // 生成所有 Bitcoin 地址类型
+    // 生成 0.1.0 可签名的 Bitcoin 地址类型
     String legacy   = P2PKHAddress.fromPublicKey(pubKey, BtcNetwork.MAINNET).toBase58();
     String wrapped  = P2SHAddress.fromPublicKeyP2WPKH(pubKey, BtcNetwork.MAINNET).toBase58();
     String segwit   = Bech32Address.p2wpkhFromPublicKey(pubKey, BtcNetwork.MAINNET).toBech32();
-    String taproot  = TaprootAddress.fromPublicKey(pubKey, BtcNetwork.MAINNET).toBech32m();
+    // P2TR：低层 TaprootAddress 类可用，但签名能力 0.2.0 才提供，0.1.0 不要往派生出来的 bc1p 地址收币。
 }
 
 // Solana - Ed25519
@@ -325,6 +341,186 @@ boolean isValidSol = SolanaAddress.isValid("4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtW
 BtcAddressType type = BtcAddressType.fromAddress("bc1p...");  // P2TR (Taproot)
 BtcNetwork network = BtcNetwork.fromAddress("tb1q...");       // TESTNET
 ```
+
+---
+
+## 云 KMS 热钱包（可选）
+
+当私钥不能落到应用进程里时（合规、多副本服务、审计需求），可用 `web3-kms` 把签名委托给 **AWS KMS**：私钥永远在 KMS 内，应用只调 `Sign` API。所有 KMS 签名密钥都实现了同一个 `SigningKey` 接口，**与现有 `ChainAdapter` / `AccountDeriver` 完全兼容**——任何能接 `SigningKey` 的位置都能换成 KMS 版本。
+
+### 支持矩阵
+
+| 链 | KMS KeySpec | 算法 |
+|----|------|------|
+| EVM (Ethereum / BSC / Polygon …) | `ECC_SECG_P256K1` | ECDSA SHA-256（v 由公钥反算） |
+| TRON | `ECC_SECG_P256K1` | 同上 |
+| Solana | `ECC_NIST_EDWARDS25519` | Ed25519（KMS `ED25519_SHA_512`，AWS 2025 年加） |
+
+KMS 是**热钱包模式**，不是 HD 钱包——每个 KMS Key 是一个独立账户，靠 KeyId / Alias / ARN 寻址；如果需要"一个助记词 → 多链多用户"派生，继续用 `AccountDeriver`。
+
+### Maven 依赖
+
+在你自己的应用 `pom.xml` 里：
+
+```xml
+<dependency>
+    <groupId>io.github.superedison</groupId>
+    <artifactId>web3-kms</artifactId>
+    <version>latest</version>
+</dependency>
+
+<!-- AWS KMS SDK（web3-kms 把它声明为 optional，需要你显式引入） -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>kms</artifactId>
+    <version>2.44.11</version>  <!-- AWS SDK version, independent of web3-kms -->
+</dependency>
+
+<!-- 二选一：AWS SDK 的 HTTP 客户端实现 -->
+<!-- 推荐：轻量、零 logging 依赖 -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>url-connection-client</artifactId>
+    <version>2.44.11</version>  <!-- AWS SDK version, independent of web3-kms -->
+</dependency>
+<!-- 或保留 Apache HttpClient（kms 默认），但要补 commons-logging：
+<dependency><groupId>commons-logging</groupId><artifactId>commons-logging</artifactId><version>1.2</version></dependency>
+-->
+```
+
+### 构造 KmsClient
+
+`web3-kms` 不对 `KmsClient` 做封装——直接用 AWS SDK 原生 builder 即可。凭证来源按推荐度由高到低：
+
+| 方式 | 写法 | 适用场景 |
+|------|------|------|
+| **IAM Role / 实例 Profile** | `KmsClient.builder().region(R).build()`（不传 credentialsProvider） | ✅ 生产首选，零密钥落地 |
+| **环境变量 / `~/.aws/credentials`** | 同上，SDK 走默认凭证链查找 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | 本地开发 |
+| **静态 AK/SK** | 见下方代码 | 临时调试 / 多租户（每租户一套 KMS Key + 一套 AK） |
+| **STS 临时凭证** | `AwsSessionCredentials.create(ak, sk, sessionToken)` | 跨账号 / 短期授权 |
+| **自定义 Provider**（如 SecretManager 拉取） | 实现 `AwsCredentialsProvider` 接口 | 复杂凭证轮转策略 |
+
+```java
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.kms.KmsClient;
+
+// 生产推荐：不传 credentialsProvider，走默认凭证链（IAM Role / 实例 Profile / 环境变量）
+KmsClient kms = KmsClient.builder()
+        .region(Region.AP_SOUTHEAST_1)
+        .build();
+
+// 调试 / 多租户：显式 AK/SK
+KmsClient kmsDebug = KmsClient.builder()
+        .region(Region.US_EAST_1)
+        .credentialsProvider(StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(System.getenv("AWS_AK"), System.getenv("AWS_SK"))))
+        .build();
+
+// LocalStack / 私有部署
+KmsClient kmsLocal = KmsClient.builder()
+        .region(Region.US_EAST_1)
+        .endpointOverride(java.net.URI.create("http://localhost:4566"))
+        .credentialsProvider(StaticCredentialsProvider.create(
+                AwsBasicCredentials.create("test", "test")))
+        .build();
+```
+
+> ⚠️ AK/SK 是热钱包私钥级别的凭证，**不要进 git**。生产用 IAM Role / SecretManager / K8s Secret。
+>
+> 💡 `KmsClient` 线程安全，多个 `SigningKey` 应共享同一个 client，省连接和 STS 刷新成本。
+
+### 统一抽象：所有签名入口都收 `SigningKey`
+
+从 `0.1.0` 起，业务层 API（消息签名、链特定 Signer、Wallet 等）**一律收 `SigningKey`**，本地私钥和 KMS Key 走同一套入口：
+
+```java
+import io.github.superedison.web3.core.signer.SigningKey;
+import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
+import io.github.superedison.web3.kms.aws.AwsKmsSecp256k1Key;
+
+// 本地私钥
+try (SigningKey local = new Secp256k1Signer(privateKey)) { /* ... */ }
+
+// KMS 托管 —— 同样是 SigningKey
+try (SigningKey kms = new AwsKmsSecp256k1Key(kmsClient, "alias/eth-hot")) { /* ... */ }
+```
+
+任何能写 `SigningKey` 的地方，本地和 KMS 完全可互换。
+
+### 用 AWS KMS 签 EVM / TRON 交易
+
+```java
+import io.github.superedison.web3.chain.evm.EvmChainAdapter;
+import io.github.superedison.web3.chain.evm.address.EvmAddress;
+import io.github.superedison.web3.chain.evm.message.EvmMessageSigner;
+import io.github.superedison.web3.chain.evm.tx.EvmRawTransaction;
+import io.github.superedison.web3.chain.evm.wallet.EvmWallet;
+import io.github.superedison.web3.core.signer.Signature;
+import io.github.superedison.web3.core.signer.SigningKey;
+import io.github.superedison.web3.kms.aws.AwsKmsSecp256k1Key;
+
+try (SigningKey kmsKey = new AwsKmsSecp256k1Key(kms, "alias/eth-hot")) {
+
+    // ① 直接派生地址
+    EvmAddress addr = EvmAddress.fromPublicKey(kmsKey.getPublicKey());
+
+    // ② 签交易：ChainAdapter 不知道也不关心私钥在哪
+    EvmRawTransaction tx = EvmRawTransaction.builder()
+            .nonce(1).gasPrice(java.math.BigInteger.valueOf(20_000_000_000L))
+            .gasLimit(21_000).to("0x742d35Cc6634C0532925a3b844Bc9e7595f8fE7")
+            .value(java.math.BigInteger.valueOf(1_000_000_000_000_000_000L))
+            .chainId(1).build();
+    var adapter = new EvmChainAdapter();
+    var signed = adapter.sign(tx, kmsKey);
+    byte[] rawBytes = adapter.rawBytes(signed);   // 广播字节
+
+    // ③ EIP-191 personal_sign：同一个 kmsKey
+    Signature msgSig = EvmMessageSigner.signMessage("hello dapp", kmsKey);
+
+    // ④ 想要 Wallet 抽象（KMS 钱包，无 KeyHolder）：
+    EvmWallet wallet = new EvmWallet("hot-1", kmsKey);
+    assert wallet.getKeyHolder().isEmpty();  // 远程托管，不可导出私钥
+}
+```
+
+TRON 一模一样，类名前缀换成 `Tron`，KMS Key 的 KeySpec 仍是 `ECC_SECG_P256K1`。
+
+### 用 AWS KMS 签 Solana 交易
+
+```java
+import io.github.superedison.web3.chain.solana.SolanaChainAdapter;
+import io.github.superedison.web3.chain.solana.address.SolanaAddress;
+import io.github.superedison.web3.core.signer.SigningKey;
+import io.github.superedison.web3.kms.aws.AwsKmsEd25519Key;
+
+try (SigningKey kmsKey = new AwsKmsEd25519Key(kms, "alias/sol-hot")) {
+    SolanaAddress addr = SolanaAddress.fromPublicKey(kmsKey.getPublicKey());
+
+    // 跟前面 Solana 章节一样构造 SolanaRawTransaction，再 adapter.sign(tx, kmsKey)
+}
+```
+
+### IAM 权限最小集
+
+热钱包用的 IAM 角色至少需要这两个 KMS 动作（绑到具体 KeyId 上，别开 `*`）：
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["kms:GetPublicKey", "kms:Sign"],
+  "Resource": "arn:aws:kms:ap-southeast-1:123456789012:key/<your-key-id>"
+}
+```
+
+### 注意事项
+
+- **延迟**：每笔签名一次 KMS 网络调用（同区域 < 50ms），高 TPS 场景关注 KMS 请求配额（默认每秒 ~10k，可申请）。
+- **v 计算（EVM/TRON）**：KMS 返回 DER `(r, s)`，模块内部用缓存公钥反算 `v ∈ [0,3]`，再由现有适配器叠 EIP-155。
+- **destroy() 语义**：私钥在 AWS，`close()` 只清本地公钥缓存；KMS 不"删除"密钥（要删走 AWS 的 `ScheduleKeyDeletion`）。
+- **KmsClient 复用**：线程安全，多个 `SigningKey` 共享一个 `KmsClient` 即可。
+- **备份**：KMS Key 丢失 = 资产丢失。生产配多区域 Key / 跨账号备份策略。
 
 ---
 
@@ -402,15 +598,18 @@ import io.github.superedison.web3.chain.btc.tx.BtcSignedTransaction;
 import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 
 // 构建交易
-byte[] prevTxHash = /* 32 字节前一笔交易哈希 */ new byte[32];
-byte[] recipientScript = /* 接收方的 scriptPubKey */ new byte[25];
+byte[] prevTxHash       = /* 32 字节前一笔交易哈希 */ new byte[32];
+byte[] prevScriptPubKey = /* 被花费 UTXO 的 scriptPubKey (P2WPKH 或 P2SH-P2WPKH) */ new byte[22];
+long   prevAmount       = 100_000L;   // 被花费 UTXO 的金额（聪），SegWit 签名必填（BIP-143）
+byte[] recipientScript  = /* 接收方的 scriptPubKey */ new byte[25];
 
 BtcRawTransaction tx = BtcRawTransaction.builder()
         .version(2)
-        .addInput(prevTxHash, 0)           // UTXO 引用
-        .addOutput(50000L, recipientScript) // 50000 satoshis
+        .segwit(true)                                                 // 启用 SegWit
+        // 4 参重载携带 amount + scriptPubKey；2 参的简化重载不能配合 segwit=true，会被签名器拒绝
+        .addInput(prevTxHash, 0, prevAmount, prevScriptPubKey)
+        .addOutput(50000L, recipientScript)                           // 50000 satoshis
         .lockTime(0)
-        .segwit(true)                       // 启用 SegWit
         .build();
 
 // 签名
@@ -477,18 +676,20 @@ try (Ed25519Signer key = new Ed25519Signer(/* 32 字节私钥 */ new byte[32])) 
 |----|------|----------|----------|------|
 | EVM | secp256k1 | m/44'/60'/0'/0/0 | 0x...（EIP-55 校验和） | 已完成 |
 | TRON | secp256k1 | m/44'/195'/0'/0/0 | T...（Base58Check） | 已完成 |
-| Bitcoin | secp256k1 | m/84'/0'/0'/0/0 | P2PKH, P2SH, P2WPKH, P2WSH, P2TR | 已完成 |
+| Bitcoin | secp256k1 | m/84'/0'/0'/0/0 | P2PKH, P2SH-P2WPKH, P2WPKH | 0.1.0 ✅ ｜ P2TR ⏳ 0.2.0 |
 | Solana | Ed25519 | m/44'/501'/0'/0' | Base58（32 字节） | 已完成 |
 | Cosmos | secp256k1 | m/44'/118'/0'/0/0 | cosmos1... | 计划中 |
 | Aptos | Ed25519 | m/44'/637'/0'/0'/0' | 0x... | 计划中 |
 | NEAR | Ed25519 | m/44'/397'/0' | ... | 计划中 |
 
-## Bitcoin 地址类型
+## Bitcoin 地址类型（0.1.0 支持矩阵）
 
-| 类型 | 前缀 | BIP | 描述 |
-|------|------|-----|------|
-| P2PKH | 1（主网），m/n（测试网） | BIP-44 | Legacy 地址 |
-| P2SH-P2WPKH | 3（主网），2（测试网） | BIP-49 | Wrapped SegWit |
-| P2WPKH | bc1q（主网），tb1q（测试网） | BIP-84 | Native SegWit |
-| P2WSH | bc1q（主网），tb1q（测试网） | BIP-84 | Native SegWit Script |
-| P2TR | bc1p（主网），tb1p（测试网） | BIP-86 | Taproot |
+| 类型 | 前缀 | BIP | 派生 | 签名（花费） | 备注 |
+|------|------|-----|:----:|:----:|------|
+| P2PKH | 1（主网），m/n（测试网） | BIP-44 | ✅ | ✅ | Legacy 地址 |
+| P2SH-P2WPKH | 3（主网），2（测试网） | BIP-49 | ✅ | ✅ | Wrapped SegWit；input 需提供 `amount` + P2SH `scriptPubKey` |
+| P2WPKH | bc1q（主网），tb1q（测试网） | BIP-84 | ✅ | ✅ | Native SegWit；input 需提供 `amount` |
+| P2WSH | bc1q（主网），tb1q（测试网） | BIP-84 | ⚠️ 仅地址类工具 | ❌ | 需脚本而非公钥，未在 deriver 暴露 |
+| P2TR | bc1p（主网），tb1p（测试网） | BIP-86 | ⏳ 0.2.0 | ⏳ 0.2.0 | 签名（BIP-340 Schnorr + BIP-341 sighash）未实现，**派生入口已禁用**避免用户丢币 |
+
+> ⚠️ **SegWit 输入 `amount` 必填**：BIP-143 签名哈希必须包含被花费 UTXO 的金额。0.1.0 起，`addInput(prevTxHash, idx)` 简化重载（amount=0）配合 segwit 路径会**直接抛异常**。请用 `addInput(prevTxHash, idx, amount, scriptPubKey)` 重载。

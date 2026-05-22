@@ -106,7 +106,7 @@ public final class P2PKHAddress extends BtcAddress {
 
     /**
      * 获取脚本公钥（ScriptPubKey）
-     * OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+     * OP_DUP OP_HASH160 &lt;20 bytes&gt; OP_EQUALVERIFY OP_CHECKSIG
      */
     public byte[] getScriptPubKey() {
         byte[] script = new byte[25];

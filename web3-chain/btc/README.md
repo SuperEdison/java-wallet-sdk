@@ -2,42 +2,19 @@
 
 Bitcoin blockchain implementation for the Web3 Wallet SDK.
 
-## Features
+## 0.1.0 Support Matrix
 
-- **Multiple Address Types**
-  - P2PKH (Legacy, starts with `1`)
-  - P2SH-P2WPKH (Wrapped SegWit, starts with `3`)
-  - P2WPKH (Native SegWit, starts with `bc1q`)
-  - P2WSH (Native SegWit Script, starts with `bc1q`)
-  - P2TR (Taproot, starts with `bc1p`)
+| Type | Derive | Sign (spend) | Notes |
+|------|:------:|:------------:|------|
+| P2PKH (Legacy, `1...` / `m,n`) | ✅ | ✅ | BIP-44 |
+| P2SH-P2WPKH (Wrapped SegWit, `3...` / `2`) | ✅ | ✅ | BIP-49. Input requires `amount` + the P2SH `scriptPubKey`. Signer strictly verifies the P2SH hash matches `hash160(0x00 0x14 hash160(pubkey))` — multisig / arbitrary P2SH are rejected with a clear error. |
+| P2WPKH (Native SegWit, `bc1q...` / `tb1q`) | ✅ | ✅ | BIP-84. Input requires `amount` (BIP-143). |
+| P2WSH (`bc1q...` / `tb1q`) | ⚠️ address-only | ❌ | Requires a script, not a public key. Not exposed via `AccountDeriver`. |
+| P2TR (Taproot, `bc1p...` / `tb1p`) | ⏳ 0.2.0 | ⏳ 0.2.0 | High-level entry points (`BtcAddressEncoder.encode(P2TR, ...)` / `AccountDeriver.getPathForBtcType(P2TR, ...)`) throw `UnsupportedOperationException` to prevent deriving unspendable addresses. Low-level `TaprootAddress.fromPublicKey(...)` remains for parsing / experimentation. |
 
-- **Network Support**
-  - Mainnet
-  - Testnet
-  - Regtest
+Encoding utilities (Base58Check, Bech32, Bech32m) are independent of the support matrix and continue to work for all types.
 
-- **Encoding**
-  - Base58Check (for P2PKH, P2SH)
-  - Bech32 (for P2WPKH, P2WSH - BIP-173)
-  - Bech32m (for Taproot - BIP-350)
-
-- **Transaction**
-  - Legacy and SegWit transaction formats
-  - BIP-143 signature hash (for SegWit)
-
-## Address Types
-
-| Type | Class | Prefix (Mainnet) | Prefix (Testnet) | BIP |
-|------|-------|------------------|------------------|-----|
-| P2PKH | `P2PKHAddress` | `1` | `m`, `n` | BIP-44 |
-| P2SH-P2WPKH | `P2SHAddress` | `3` | `2` | BIP-49 |
-| P2WPKH | `Bech32Address` | `bc1q` | `tb1q` | BIP-84 |
-| P2WSH | `Bech32Address` | `bc1q` | `tb1q` | BIP-84 |
-| P2TR | `TaprootAddress` | `bc1p` | `tb1p` | BIP-86 |
-
-## Usage
-
-### Generate Addresses
+## Address generation
 
 ```java
 import io.github.superedison.web3.chain.btc.address.*;
@@ -50,148 +27,100 @@ try (Secp256k1Signer signer = new Secp256k1Signer(privateKey)) {
 
     // Legacy P2PKH (starts with '1')
     P2PKHAddress p2pkh = P2PKHAddress.fromPublicKey(pubKey, BtcNetwork.MAINNET);
-    System.out.println("Legacy: " + p2pkh.toBase58());
 
     // Wrapped SegWit P2SH-P2WPKH (starts with '3')
     P2SHAddress p2sh = P2SHAddress.fromPublicKeyP2WPKH(pubKey, BtcNetwork.MAINNET);
-    System.out.println("Wrapped SegWit: " + p2sh.toBase58());
 
     // Native SegWit P2WPKH (starts with 'bc1q')
     Bech32Address bech32 = Bech32Address.p2wpkhFromPublicKey(pubKey, BtcNetwork.MAINNET);
-    System.out.println("Native SegWit: " + bech32.toBech32());
 
-    // Taproot P2TR (starts with 'bc1p')
-    TaprootAddress taproot = TaprootAddress.fromPublicKey(pubKey, BtcNetwork.MAINNET);
-    System.out.println("Taproot: " + taproot.toBech32m());
+    // ⚠️ Taproot — 0.1.0 cannot sign P2TR inputs yet. Available only for parsing / experiment.
+    //    Do NOT send real funds to a derived bc1p... address with 0.1.0; you will not be
+    //    able to spend them. Wait for 0.2.0 (BIP-340 Schnorr + BIP-341 sighash).
 }
 ```
 
-### Parse Address
+## Parse / validate
 
 ```java
-// Parse any Bitcoin address
 BtcAddress addr = BtcAddress.fromString("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4");
+System.out.println(addr.getType());     // P2WPKH
+System.out.println(addr.getNetwork());  // MAINNET
 
-System.out.println("Type: " + addr.getType());       // P2WPKH
-System.out.println("Network: " + addr.getNetwork()); // MAINNET
-System.out.println("Hash: " + bytesToHex(addr.getHash()));
+boolean ok = BtcAddress.isValid("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"); // true
 
-// Type-specific parsing
-P2PKHAddress legacy = P2PKHAddress.fromBase58("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2");
-Bech32Address segwit = Bech32Address.fromBech32("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4");
-TaprootAddress taproot = TaprootAddress.fromBech32("bc1p...");
+BtcAddressType type = BtcAddressType.fromAddress("bc1p..."); // P2TR (parsing only)
+BtcNetwork network  = BtcNetwork.fromAddress("tb1q...");     // TESTNET
 ```
 
-### Validate Address
+## Build & sign a transaction
 
-```java
-// Validate any address
-boolean isValid = BtcAddress.isValid("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"); // true
-
-// Detect address type
-BtcAddressType type = BtcAddressType.fromAddress("bc1p...");  // P2TR
-
-// Detect network
-BtcNetwork network = BtcNetwork.fromAddress("tb1q...");  // TESTNET
-```
-
-### Get ScriptPubKey
-
-```java
-// Get scriptPubKey for each address type
-byte[] p2pkhScript = p2pkh.getScriptPubKey();     // OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
-byte[] p2shScript = p2sh.getScriptPubKey();       // OP_HASH160 <20> OP_EQUAL
-byte[] bech32Script = bech32.getScriptPubKey();   // OP_0 <20>
-byte[] taprootScript = taproot.getScriptPubKey(); // OP_1 <32>
-```
-
-### Build & Sign Transaction
+⚠️ **SegWit inputs require `amount` and `scriptPubKey`**. BIP-143 includes the spent UTXO amount in the signature hash; the simplified `addInput(prevTxHash, idx)` overload defaults `amount=0` and **will be rejected** by the SegWit signing path. Use the overload that takes the UTXO amount and scriptPubKey.
 
 ```java
 import io.github.superedison.web3.chain.btc.BtcChainAdapter;
+import io.github.superedison.web3.chain.btc.address.BtcNetwork;
 import io.github.superedison.web3.chain.btc.tx.BtcRawTransaction;
 import io.github.superedison.web3.chain.btc.tx.BtcSignedTransaction;
 
-// Build transaction
-byte[] prevTxHash = /* previous tx hash (32 bytes) */ new byte[32];
-byte[] recipientScript = /* recipient's scriptPubKey */ new byte[25];
+byte[] prevTxHash = /* 32-byte previous tx hash */;
+byte[] prevScriptPubKey = /* the scriptPubKey of the UTXO being spent */;
+long prevAmount = 100_000L;             // satoshis locked in the UTXO
 
 BtcRawTransaction tx = BtcRawTransaction.builder()
         .version(2)
-        .addInput(prevTxHash, 0)            // UTXO: txid, output index
-        .addOutput(50000L, recipientScript) // 50000 satoshis to recipient
-        .addOutput(49000L, changeScript)    // Change output
+        .segwit(true)
+        // 4-arg form carries the amount + scriptPubKey required for BIP-143.
+        // For P2SH-P2WPKH inputs, prevScriptPubKey must be the P2SH form
+        // (OP_HASH160 <20> OP_EQUAL); the signer auto-detects and writes the
+        // 22-byte redeemScript into scriptSig.
+        .addInput(prevTxHash, 0, prevAmount, prevScriptPubKey)
+        .addOutput(50_000L, recipientScript)
+        .addOutput(49_000L, changeScript)
         .lockTime(0)
-        .segwit(true)                       // SegWit transaction
         .build();
 
-// Sign
 BtcChainAdapter adapter = new BtcChainAdapter(BtcNetwork.MAINNET);
-
 try (Secp256k1Signer key = new Secp256k1Signer(privateKey)) {
     BtcSignedTransaction signed = adapter.sign(tx, key);
-
-    String txHex = signed.encodeHex();     // Raw transaction hex
-    String txid = signed.txHashHex();      // Transaction ID
-    byte[] rawBytes = signed.rawBytes();   // Raw bytes for broadcast
+    String txHex = signed.encodeHex();
+    String txid  = signed.txHashHex();
 }
 ```
 
-## Testnet Usage
+## Networks
 
 ```java
-// Generate testnet addresses
-P2PKHAddress testnetLegacy = P2PKHAddress.fromPublicKey(pubKey, BtcNetwork.TESTNET);
-// Output: mzBc4XEFSdzCDcTxAgf6EZXgsZWpztRhef (starts with 'm' or 'n')
-
-Bech32Address testnetSegwit = Bech32Address.p2wpkhFromPublicKey(pubKey, BtcNetwork.TESTNET);
-// Output: tb1q... (starts with 'tb1q')
-
-TaprootAddress testnetTaproot = TaprootAddress.fromPublicKey(pubKey, BtcNetwork.TESTNET);
-// Output: tb1p... (starts with 'tb1p')
-
-// Use testnet adapter
-BtcChainAdapter testnetAdapter = new BtcChainAdapter(BtcNetwork.TESTNET);
+BtcChainAdapter mainnet = new BtcChainAdapter(BtcNetwork.MAINNET);
+BtcChainAdapter testnet = new BtcChainAdapter(BtcNetwork.TESTNET);
 ```
 
-## BIP Standards
+## BIP coverage
 
-| BIP | Description | Address Type |
-|-----|-------------|--------------|
-| BIP-44 | Multi-account HD (m/44'/0'/0'/0/0) | P2PKH |
-| BIP-49 | SegWit-compatible (m/49'/0'/0'/0/0) | P2SH-P2WPKH |
-| BIP-84 | Native SegWit (m/84'/0'/0'/0/0) | P2WPKH |
-| BIP-86 | Taproot (m/86'/0'/0'/0/0) | P2TR |
-| BIP-141 | SegWit consensus rules | SegWit transactions |
-| BIP-143 | SegWit signature hash | SegWit signing |
-| BIP-173 | Bech32 encoding | P2WPKH, P2WSH |
-| BIP-350 | Bech32m encoding | Taproot |
+| BIP | Topic | 0.1.0 status |
+|-----|-------|:------------:|
+| BIP-44  | HD account hierarchy (P2PKH) | ✅ |
+| BIP-49  | SegWit-compatible derivation (P2SH-P2WPKH) | ✅ |
+| BIP-84  | Native SegWit derivation (P2WPKH) | ✅ |
+| BIP-86  | Taproot derivation (P2TR) | ⏳ 0.2.0 |
+| BIP-141 | SegWit consensus rules | ✅ |
+| BIP-143 | SegWit signature hash | ✅ |
+| BIP-173 | Bech32 encoding | ✅ |
+| BIP-340 | Schnorr signatures | ⏳ 0.2.0 |
+| BIP-341 | Taproot sighash | ⏳ 0.2.0 |
+| BIP-350 | Bech32m encoding | ✅ (parsing only) |
 
 ## Architecture
 
 ```
 btc/
-├── address/
-│   ├── BtcAddress.java         # Unified address interface (sealed)
-│   ├── BtcAddressType.java     # Address type enum
-│   ├── BtcNetwork.java         # Network enum (mainnet/testnet/regtest)
-│   ├── P2PKHAddress.java       # Legacy addresses
-│   ├── P2SHAddress.java        # Wrapped SegWit addresses
-│   ├── Bech32Address.java      # Native SegWit addresses
-│   ├── TaprootAddress.java     # Taproot addresses
-│   ├── Base58Check.java        # Base58Check encoding
-│   └── Bech32.java             # Bech32/Bech32m encoding
-├── tx/
-│   ├── BtcRawTransaction.java  # Raw transaction model
-│   └── BtcSignedTransaction.java
-├── internal/
-│   ├── BtcTransactionEncoder.java
-│   ├── BtcTransactionHasher.java
-│   └── BtcTransactionSigner.java
-└── BtcChainAdapter.java        # ChainAdapter implementation
+├── address/                       # Address types + encoding (Base58Check, Bech32, Bech32m)
+├── tx/                            # Transaction model (BtcRawTransaction, BtcSignedTransaction)
+├── internal/                      # BIP-143 encoder, txid hasher, ECDSA signer
+└── BtcChainAdapter.java           # ChainAdapter SPI implementation
 ```
 
 ## Dependencies
 
-- `web3-chain-spi` - Chain SPI contracts
-- `web3-crypto` - Secp256k1 signing, SHA256, RIPEMD160
+- `web3-chain-spi` — Chain SPI contracts
+- `web3-crypto` — Secp256k1 signing, SHA256, RIPEMD160

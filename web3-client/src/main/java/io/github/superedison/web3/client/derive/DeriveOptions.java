@@ -8,10 +8,14 @@ import io.github.superedison.web3.chain.btc.address.BtcNetwork;
  *
  * 用于自定义派生行为，特别是 BTC 的多地址类型支持。
  *
+ * 0.1.0 支持的 {@link BtcAddressType}：{@code P2PKH} / {@code P2SH_P2WPKH} / {@code P2WPKH}。
+ * 传入 {@code P2TR}（Taproot）会让派生入口抛 {@link UnsupportedOperationException}，
+ * 完整 Taproot 支持计划于 0.2.0 提供。
+ *
  * 使用示例：
  * <pre>{@code
  * DeriveOptions opts = DeriveOptions.builder()
- *     .btcAddressType(BtcAddressType.P2TR)
+ *     .btcAddressType(BtcAddressType.P2WPKH)
  *     .btcNetwork(BtcNetwork.MAINNET)
  *     .build();
  *

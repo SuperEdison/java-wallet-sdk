@@ -132,10 +132,11 @@ class AccountDeriverTest {
         }
 
         @Test
-        @DisplayName("P2TR 使用 purpose 86")
-        void p2trPurpose86() {
-            String path = AccountDeriver.getPathForBtcType(BtcAddressType.P2TR, 0);
-            assertThat(path).startsWith("m/86'/0'/");
+        @DisplayName("P2TR 在 0.1.0 暂未开放派生，调用应抛 UnsupportedOperationException")
+        void p2trIsDisabledIn010() {
+            assertThatThrownBy(() -> AccountDeriver.getPathForBtcType(BtcAddressType.P2TR, 0))
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessageContaining("Taproot");
         }
     }
 
@@ -301,15 +302,16 @@ class AccountDeriverTest {
         }
 
         @Test
-        @DisplayName("BTC Taproot 地址以 bc1p 开头")
-        void btcTaprootAddress() {
+        @DisplayName("BTC Taproot (P2TR) 在 0.1.0 暂未开放，派生应抛 UnsupportedOperationException")
+        void btcTaprootDisabledIn010() {
             try (AccountDeriver deriver = AccountDeriver.fromMnemonic(TEST_MNEMONIC)) {
                 DeriveOptions opts = DeriveOptions.builder()
                         .btcAddressType(BtcAddressType.P2TR)
                         .btcNetwork(BtcNetwork.MAINNET)
                         .build();
-                String address = deriver.deriveAddress("user_1", ChainType.BTC, opts);
-                assertThat(address).startsWith("bc1p");
+                assertThatThrownBy(() -> deriver.deriveAddress("user_1", ChainType.BTC, opts))
+                        .isInstanceOf(UnsupportedOperationException.class)
+                        .hasMessageContaining("Taproot");
             }
         }
 
