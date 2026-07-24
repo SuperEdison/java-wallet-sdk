@@ -150,6 +150,7 @@ class SolanaChainAdapterTest {
 
         // 使用 secp256k1 私钥应该失败
         byte[] secp256k1Key = new byte[32];
+        secp256k1Key[31] = 1;
         try (var signer = new io.github.superedison.web3.crypto.ecc.Secp256k1Signer(secp256k1Key)) {
             byte[] publicKey = new byte[32];
             byte[] recentBlockhash = new byte[32];

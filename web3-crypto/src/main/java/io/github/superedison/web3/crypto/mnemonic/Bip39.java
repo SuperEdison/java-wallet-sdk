@@ -11,6 +11,7 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * BIP-39 助记词实现
@@ -33,7 +34,11 @@ public final class Bip39 {
         int entropyBits = wordCountToEntropyBits(wordCount);
         byte[] entropy = new byte[entropyBits / 8];
         SECURE_RANDOM.nextBytes(entropy);
-        return entropyToMnemonic(entropy);
+        try {
+            return entropyToMnemonic(entropy);
+        } finally {
+            SecureBytes.secureWipe(entropy);
+        }
     }
 
     /**
@@ -49,6 +54,10 @@ public final class Bip39 {
      * @return 助记词列表
      */
     public static List<String> entropyToMnemonic(byte[] entropy) {
+        if (entropy == null || !isValidEntropyLength(entropy.length)) {
+            throw new IllegalArgumentException("Entropy must be 16, 20, 24, 28, or 32 bytes");
+        }
+
         int entropyBits = entropy.length * 8;
         int checksumBits = entropyBits / 32;
         int totalBits = entropyBits + checksumBits;
@@ -58,20 +67,26 @@ public final class Bip39 {
         byte[] hash = Sha256.hash(entropy);
 
         // 合并熵和校验和
-        byte[] entropyWithChecksum = new byte[entropy.length + 1];
-        System.arraycopy(entropy, 0, entropyWithChecksum, 0, entropy.length);
-        entropyWithChecksum[entropy.length] = hash[0];
+        byte[] entropyWithChecksum = null;
+        try {
+            entropyWithChecksum = new byte[entropy.length + 1];
+            System.arraycopy(entropy, 0, entropyWithChecksum, 0, entropy.length);
+            entropyWithChecksum[entropy.length] = hash[0];
 
-        // 转换为11位索引
-        List<String> words = new ArrayList<>(wordCount);
-        String[] wordList = Bip39WordList.ENGLISH;
+            // 转换为11位索引
+            List<String> words = new ArrayList<>(wordCount);
+            String[] wordList = Bip39WordList.ENGLISH;
 
-        for (int i = 0; i < wordCount; i++) {
-            int index = extractBits(entropyWithChecksum, i * 11, 11);
-            words.add(wordList[index]);
+            for (int i = 0; i < wordCount; i++) {
+                int index = extractBits(entropyWithChecksum, i * 11, 11);
+                words.add(wordList[index]);
+            }
+
+            return words;
+        } finally {
+            SecureBytes.secureWipe(hash);
+            SecureBytes.secureWipe(entropyWithChecksum);
         }
-
-        return words;
     }
 
     /**
@@ -92,17 +107,23 @@ public final class Bip39 {
 
         // 将单词转换为索引并组合成位
         byte[] bits = new byte[(totalBits + 7) / 8];
+        try {
+            for (int i = 0; i < wordCount; i++) {
+                int index = findWordIndex(mnemonic.get(i).toLowerCase(Locale.ROOT), wordList);
+                if (index < 0) {
+                    throw new IllegalArgumentException("Invalid mnemonic word: " + mnemonic.get(i));
+                }
+                setBits(bits, i * 11, 11, index);
+            }
 
-        for (int i = 0; i < wordCount; i++) {
-            int index = findWordIndex(mnemonic.get(i), wordList);
-            setBits(bits, i * 11, 11, index);
+            // 提取熵
+            byte[] entropy = new byte[entropyBits / 8];
+            System.arraycopy(bits, 0, entropy, 0, entropy.length);
+
+            return entropy;
+        } finally {
+            SecureBytes.secureWipe(bits);
         }
-
-        // 提取熵
-        byte[] entropy = new byte[entropyBits / 8];
-        System.arraycopy(bits, 0, entropy, 0, entropy.length);
-
-        return entropy;
     }
 
     /**
@@ -123,17 +144,25 @@ public final class Bip39 {
      * @return 64字节种子
      */
     public static byte[] mnemonicToSeed(String mnemonic, String passphrase) {
-        // NFKD 标准化
+        if (mnemonic == null) {
+            throw new IllegalArgumentException("Mnemonic cannot be null");
+        }
+
+        // BIP-39 specifies NFKD normalization only. Preserve case and whitespace so
+        // seeds created by previously released versions remain reproducible.
         String normalizedMnemonic = Normalizer.normalize(mnemonic, Normalizer.Form.NFKD);
         String normalizedPassphrase = Normalizer.normalize(
                 "mnemonic" + (passphrase != null ? passphrase : ""),
                 Normalizer.Form.NFKD
         );
 
+        char[] password = normalizedMnemonic.toCharArray();
+        byte[] salt = normalizedPassphrase.getBytes(StandardCharsets.UTF_8);
+        PBEKeySpec spec = null;
         try {
-            PBEKeySpec spec = new PBEKeySpec(
-                    normalizedMnemonic.toCharArray(),
-                    normalizedPassphrase.getBytes(StandardCharsets.UTF_8),
+            spec = new PBEKeySpec(
+                    password,
+                    salt,
                     PBKDF2_ITERATIONS,
                     SEED_LENGTH * 8
             );
@@ -141,6 +170,12 @@ public final class Bip39 {
             return factory.generateSecret(spec).getEncoded();
         } catch (Exception e) {
             throw new RuntimeException("Failed to derive seed", e);
+        } finally {
+            if (spec != null) {
+                spec.clearPassword();
+            }
+            Arrays.fill(password, '\0');
+            SecureBytes.secureWipe(salt);
         }
     }
 
@@ -169,35 +204,43 @@ public final class Bip39 {
 
         String[] wordList = Bip39WordList.ENGLISH;
 
-        // 检查所有单词是否在词表中
+        // Preserve the case-insensitive validation behavior of released versions.
+        // Seed derivation remains case-sensitive, as required for wallet recovery.
         for (String word : mnemonic) {
-            if (findWordIndex(word.toLowerCase(), wordList) == -1) {
+            if (word == null || findWordIndex(word.toLowerCase(Locale.ROOT), wordList) == -1) {
                 return false;
             }
         }
 
         // 验证校验和
+        byte[] bits = null;
+        byte[] entropy = null;
+        byte[] hash = null;
         try {
             int totalBits = wordCount * 11;
             int checksumBits = wordCount / 3;
             int entropyBits = totalBits - checksumBits;
 
-            byte[] bits = new byte[(totalBits + 7) / 8];
+            bits = new byte[(totalBits + 7) / 8];
             for (int i = 0; i < wordCount; i++) {
-                int index = findWordIndex(mnemonic.get(i).toLowerCase(), wordList);
+                int index = findWordIndex(mnemonic.get(i).toLowerCase(Locale.ROOT), wordList);
                 setBits(bits, i * 11, 11, index);
             }
 
-            byte[] entropy = new byte[entropyBits / 8];
+            entropy = new byte[entropyBits / 8];
             System.arraycopy(bits, 0, entropy, 0, entropy.length);
 
-            byte[] hash = Sha256.hash(entropy);
+            hash = Sha256.hash(entropy);
             int checksumFromHash = (hash[0] & 0xFF) >> (8 - checksumBits);
             int checksumFromMnemonic = extractBits(bits, entropyBits, checksumBits);
 
             return checksumFromHash == checksumFromMnemonic;
         } catch (Exception e) {
             return false;
+        } finally {
+            SecureBytes.secureWipe(bits);
+            SecureBytes.secureWipe(entropy);
+            SecureBytes.secureWipe(hash);
         }
     }
 
@@ -205,10 +248,12 @@ public final class Bip39 {
      * 验证助记词字符串
      */
     public static boolean validateMnemonic(String mnemonic) {
-        if (mnemonic == null || mnemonic.trim().isEmpty()) {
+        if (mnemonic == null || mnemonic.isEmpty()) {
             return false;
         }
-        return validateMnemonic(Arrays.asList(mnemonic.trim().toLowerCase().split("\\s+")));
+        // Keep validation canonical and seed derivation byte-compatible with prior
+        // releases: non-canonical whitespace is rejected, never rewritten.
+        return validateMnemonic(Arrays.asList(mnemonic.split(" ", -1)));
     }
 
     private static int wordCountToEntropyBits(int wordCount) {
@@ -221,6 +266,10 @@ public final class Bip39 {
             default -> throw new IllegalArgumentException(
                     "Word count must be 12, 15, 18, 21, or 24");
         };
+    }
+
+    private static boolean isValidEntropyLength(int length) {
+        return length == 16 || length == 20 || length == 24 || length == 28 || length == 32;
     }
 
     private static int extractBits(byte[] data, int bitOffset, int numBits) {

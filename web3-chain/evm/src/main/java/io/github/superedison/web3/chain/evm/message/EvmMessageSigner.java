@@ -2,6 +2,7 @@ package io.github.superedison.web3.chain.evm.message;
 
 import io.github.superedison.web3.chain.evm.address.EvmAddress;
 import io.github.superedison.web3.chain.evm.internal.EvmSignature;
+import io.github.superedison.web3.chain.spi.signing.Secp256k1SignatureValidator;
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SigningKey;
 import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
@@ -54,7 +55,12 @@ public final class EvmMessageSigner {
         if (!(signature instanceof EvmSignature evmSig)) {
             return false;
         }
-        return Secp256k1Signer.verify(hash, evmSig.getR(), evmSig.getS(), publicKey);
+        try {
+            Secp256k1SignatureValidator.requireCanonicalLegacyV(evmSig.bytes());
+            return Secp256k1Signer.verify(hash, evmSig.getR(), evmSig.getS(), publicKey);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**
@@ -62,22 +68,24 @@ public final class EvmMessageSigner {
      * 后端验签的最常用入口：前端 MetaMask `personal_sign` 出来的 hex 解成 byte[]，传进来即可。
      */
     public static EvmAddress recoverAddress(byte[] message, byte[] signature) {
+        Secp256k1SignatureValidator.requireCanonicalLegacyV(signature);
         return EvmAddress.recover(Eip191Prefix.hash(message), signature);
     }
 
     /** {@link #recoverAddress(byte[], byte[])} 的字符串重载。 */
     public static EvmAddress recoverAddress(String message, byte[] signature) {
+        Secp256k1SignatureValidator.requireCanonicalLegacyV(signature);
         return EvmAddress.recover(Eip191Prefix.hash(message), signature);
     }
 
     /** {@link #recoverAddress(byte[], byte[])} 的 Signature 重载。 */
     public static EvmAddress recoverAddress(byte[] message, Signature signature) {
-        return EvmAddress.recover(Eip191Prefix.hash(message), signature.bytes());
+        return recoverAddress(message, signature.bytes());
     }
 
     /** {@link #recoverAddress(byte[], byte[])} 的字符串 + Signature 重载。 */
     public static EvmAddress recoverAddress(String message, Signature signature) {
-        return EvmAddress.recover(Eip191Prefix.hash(message), signature.bytes());
+        return recoverAddress(message, signature.bytes());
     }
 
     /**

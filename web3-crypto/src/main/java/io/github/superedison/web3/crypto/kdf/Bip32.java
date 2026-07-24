@@ -31,9 +31,11 @@ public final class Bip32 {
      */
     public static ExtendedKey masterKeyFromSeed(byte[] seed) {
         byte[] hmac = hmacSha512("Bitcoin seed".getBytes(StandardCharsets.UTF_8), seed);
+        byte[] privateKey = null;
+        byte[] chainCode = null;
         try {
-            byte[] privateKey = Arrays.copyOfRange(hmac, 0, 32);
-            byte[] chainCode = Arrays.copyOfRange(hmac, 32, 64);
+            privateKey = Arrays.copyOfRange(hmac, 0, 32);
+            chainCode = Arrays.copyOfRange(hmac, 32, 64);
 
             // 验证私钥有效性
             BigInteger key = new BigInteger(1, privateKey);
@@ -44,6 +46,8 @@ public final class Bip32 {
             return new ExtendedKey(privateKey, chainCode, new int[0], 0);
         } finally {
             SecureBytes.secureWipe(hmac);
+            SecureBytes.secureWipe(privateKey);
+            SecureBytes.secureWipe(chainCode);
         }
     }
 
@@ -54,57 +58,68 @@ public final class Bip32 {
      * @return 子扩展密钥
      */
     public static ExtendedKey deriveChild(ExtendedKey parent, int index) {
-        byte[] data;
-        boolean hardened = (index & 0x80000000) != 0;
-
-        if (hardened) {
-            // 硬化派生: HMAC-SHA512(chainCode, 0x00 || privateKey || index)
-            data = new byte[37];
-            data[0] = 0x00;
-            System.arraycopy(parent.privateKey(), 0, data, 1, 32);
-            ByteBuffer.wrap(data, 33, 4).putInt(index);
-        } else {
-            // 普通派生: HMAC-SHA512(chainCode, publicKey || index)
-            byte[] publicKey = privateKeyToPublicKey(parent.privateKey(), true);
-            data = new byte[37];
-            System.arraycopy(publicKey, 0, data, 0, 33);
-            ByteBuffer.wrap(data, 33, 4).putInt(index);
+        if (parent == null) {
+            throw new IllegalArgumentException("Parent key cannot be null");
         }
 
-        try {
-            byte[] hmac = hmacSha512(parent.chainCode(), data);
+        synchronized (parent) {
+            parent.checkNotDestroyed();
+
+            byte[] data = new byte[37];
             try {
-                byte[] il = Arrays.copyOfRange(hmac, 0, 32);
-                byte[] childChainCode = Arrays.copyOfRange(hmac, 32, 64);
-
-                // 计算子私钥: (il + parentKey) mod n
-                BigInteger ilInt = new BigInteger(1, il);
-                BigInteger parentKeyInt = new BigInteger(1, parent.privateKey());
-                BigInteger childKeyInt = ilInt.add(parentKeyInt).mod(N);
-
-                if (ilInt.compareTo(N) >= 0 || childKeyInt.equals(BigInteger.ZERO)) {
-                    // 防止溢出：确保 index+1 不会跨越 hardened/non-hardened 边界
-                    int nextIndex = index + 1;
-                    boolean currentHardened = (index & 0x80000000) != 0;
-                    boolean nextHardened = (nextIndex & 0x80000000) != 0;
-                    if (currentHardened != nextHardened) {
-                        throw new IllegalStateException("BIP-32 key derivation: index overflow at boundary");
-                    }
-                    return deriveChild(parent, nextIndex);
+                boolean hardened = (index & 0x80000000) != 0;
+                if (hardened) {
+                    // 硬化派生: HMAC-SHA512(chainCode, 0x00 || privateKey || index)
+                    data[0] = 0x00;
+                    System.arraycopy(parent.privateKey, 0, data, 1, 32);
+                } else {
+                    // 普通派生: HMAC-SHA512(chainCode, publicKey || index)
+                    byte[] publicKey = privateKeyToPublicKey(parent.privateKey, true);
+                    System.arraycopy(publicKey, 0, data, 0, 33);
                 }
+                ByteBuffer.wrap(data, 33, 4).putInt(index);
 
-                byte[] childPrivateKey = SecureBytes.padLeft(childKeyInt.toByteArray(), 32);
+                byte[] hmac = hmacSha512(parent.chainCode, data);
+                byte[] il = null;
+                byte[] childChainCode = null;
+                byte[] childPrivateKey = null;
+                byte[] childPrivateKeyBytes = null;
+                try {
+                    il = Arrays.copyOfRange(hmac, 0, 32);
+                    childChainCode = Arrays.copyOfRange(hmac, 32, 64);
 
-                int[] newPath = new int[parent.path().length + 1];
-                System.arraycopy(parent.path(), 0, newPath, 0, parent.path().length);
-                newPath[newPath.length - 1] = index;
+                    // 计算子私钥: (il + parentKey) mod n
+                    BigInteger ilInt = new BigInteger(1, il);
+                    BigInteger parentKeyInt = new BigInteger(1, parent.privateKey);
+                    BigInteger childKeyInt = ilInt.add(parentKeyInt).mod(N);
 
-                return new ExtendedKey(childPrivateKey, childChainCode, newPath, parent.depth() + 1);
+                    if (ilInt.compareTo(N) >= 0 || childKeyInt.equals(BigInteger.ZERO)) {
+                        // 防止溢出：确保 index+1 不会跨越 hardened/non-hardened 边界
+                        int nextIndex = index + 1;
+                        boolean nextHardened = (nextIndex & 0x80000000) != 0;
+                        if (hardened != nextHardened) {
+                            throw new IllegalStateException("BIP-32 key derivation: index overflow at boundary");
+                        }
+                        return deriveChild(parent, nextIndex);
+                    }
+
+                    childPrivateKeyBytes = childKeyInt.toByteArray();
+                    childPrivateKey = SecureBytes.padLeft(childPrivateKeyBytes, 32);
+
+                    int[] newPath = Arrays.copyOf(parent.path, parent.path.length + 1);
+                    newPath[newPath.length - 1] = index;
+
+                    return new ExtendedKey(childPrivateKey, childChainCode, newPath, parent.depth + 1);
+                } finally {
+                    SecureBytes.secureWipe(hmac);
+                    SecureBytes.secureWipe(il);
+                    SecureBytes.secureWipe(childChainCode);
+                    SecureBytes.secureWipe(childPrivateKey);
+                    SecureBytes.secureWipe(childPrivateKeyBytes);
+                }
             } finally {
-                SecureBytes.secureWipe(hmac);
+                SecureBytes.secureWipe(data);
             }
-        } finally {
-            SecureBytes.secureWipe(data);
         }
     }
 
@@ -115,16 +130,33 @@ public final class Bip32 {
      * @return 派生的扩展密钥
      */
     public static ExtendedKey derivePath(ExtendedKey master, String path) {
+        if (master == null) {
+            throw new IllegalArgumentException("Master key cannot be null");
+        }
+        master.checkNotDestroyed();
+
         int[] indices = parsePath(path);
+        // 根路径不派生子级，但返回独立对象，避免销毁结果时连带销毁 master。
+        if (indices.length == 0) {
+            return master.copy();
+        }
+
         ExtendedKey current = master;
-        for (int index : indices) {
-            ExtendedKey next = deriveChild(current, index);
+        try {
+            for (int index : indices) {
+                ExtendedKey next = deriveChild(current, index);
+                if (current != master) {
+                    current.destroy();
+                }
+                current = next;
+            }
+            return current;
+        } catch (RuntimeException | Error e) {
             if (current != master) {
                 current.destroy();
             }
-            current = next;
+            throw e;
         }
-        return current;
     }
 
     /**
@@ -143,9 +175,20 @@ public final class Bip32 {
      * 私钥转公钥
      */
     public static byte[] privateKeyToPublicKey(byte[] privateKey, boolean compressed) {
-        BigInteger privKey = new BigInteger(1, privateKey);
+        BigInteger privKey = requireValidPrivateKey(privateKey);
         ECPoint point = new FixedPointCombMultiplier().multiply(CURVE.getG(), privKey);
         return point.getEncoded(compressed);
+    }
+
+    private static BigInteger requireValidPrivateKey(byte[] privateKey) {
+        if (privateKey == null || privateKey.length != 32) {
+            throw new IllegalArgumentException("Private key must be 32 bytes");
+        }
+        BigInteger privateScalar = new BigInteger(1, privateKey);
+        if (privateScalar.signum() == 0 || privateScalar.compareTo(N) >= 0) {
+            throw new IllegalArgumentException("Private key must be in the range [1, n - 1]");
+        }
+        return privateScalar;
     }
 
     /**
@@ -156,17 +199,34 @@ public final class Bip32 {
             return new int[0];
         }
 
-        String[] parts = path.split("/");
+        String[] parts = path.split("/", -1);
         int startIndex = parts[0].equals("m") ? 1 : 0;
         int[] indices = new int[parts.length - startIndex];
 
         for (int i = startIndex; i < parts.length; i++) {
-            String part = parts[i];
+            String originalPart = parts[i];
+            if (originalPart.isEmpty()) {
+                throw new IllegalArgumentException("Derivation path contains an empty segment");
+            }
+
+            String part = originalPart;
             boolean hardened = part.endsWith("'") || part.endsWith("H");
             if (hardened) {
                 part = part.substring(0, part.length() - 1);
             }
-            int index = Integer.parseInt(part);
+
+            if (part.isEmpty() || !isAsciiDecimal(part)) {
+                throw new IllegalArgumentException("Invalid derivation path segment: " + originalPart);
+            }
+
+            final int indexValue;
+            try {
+                indexValue = Integer.parseInt(part);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Derivation index out of range: " + originalPart, e);
+            }
+
+            int index = indexValue;
             if (hardened) {
                 index |= 0x80000000;
             }
@@ -174,6 +234,16 @@ public final class Bip32 {
         }
 
         return indices;
+    }
+
+    private static boolean isAsciiDecimal(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -212,40 +282,60 @@ public final class Bip32 {
         private final byte[] chainCode;
         private final int[] path;
         private final int depth;
-        private boolean destroyed = false;
+        private volatile boolean destroyed = false;
 
         public ExtendedKey(byte[] privateKey, byte[] chainCode, int[] path, int depth) {
-            this.privateKey = SecureBytes.copy(privateKey);
-            this.chainCode = SecureBytes.copy(chainCode);
-            this.path = path == null ? new int[0] : Arrays.copyOf(path, path.length);
-            this.depth = depth;
+            if (privateKey == null || privateKey.length != 32) {
+                throw new IllegalArgumentException("Private key must be 32 bytes");
+            }
+            if (chainCode == null || chainCode.length != 32) {
+                throw new IllegalArgumentException("Chain code must be 32 bytes");
+            }
+
+            byte[] privateKeyCopy = SecureBytes.copy(privateKey);
+            byte[] chainCodeCopy = SecureBytes.copy(chainCode);
+            try {
+                requireValidPrivateKey(privateKeyCopy);
+                this.privateKey = privateKeyCopy;
+                this.chainCode = chainCodeCopy;
+                this.path = path == null ? new int[0] : Arrays.copyOf(path, path.length);
+                this.depth = depth;
+            } catch (RuntimeException | Error e) {
+                SecureBytes.secureWipe(privateKeyCopy);
+                SecureBytes.secureWipe(chainCodeCopy);
+                throw e;
+            }
         }
 
         /**
          * 获取公钥（压缩）
          */
-        public byte[] getPublicKey() {
+        public synchronized byte[] getPublicKey() {
+            checkNotDestroyed();
             return privateKeyToPublicKey(privateKey, true);
         }
 
         /**
          * 获取公钥（非压缩）
          */
-        public byte[] getUncompressedPublicKey() {
+        public synchronized byte[] getUncompressedPublicKey() {
+            checkNotDestroyed();
             return privateKeyToPublicKey(privateKey, false);
         }
 
         /**
          * 获取私钥（返回副本）
          */
-        public byte[] privateKey() {
+        public synchronized byte[] privateKey() {
+            checkNotDestroyed();
             return SecureBytes.copy(privateKey);
         }
 
         /**
          * 获取链码（返回副本）
          */
-        public byte[] chainCode() {
+        public synchronized byte[] chainCode() {
+            checkNotDestroyed();
             return SecureBytes.copy(chainCode);
         }
 
@@ -273,10 +363,12 @@ public final class Bip32 {
         /**
          * 安全销毁
          */
-        public void destroy() {
-            SecureBytes.secureWipe(privateKey);
-            SecureBytes.secureWipe(chainCode);
-            destroyed = true;
+        public synchronized void destroy() {
+            if (!destroyed) {
+                SecureBytes.secureWipe(privateKey);
+                SecureBytes.secureWipe(chainCode);
+                destroyed = true;
+            }
         }
 
         /**
@@ -292,6 +384,17 @@ public final class Bip32 {
          */
         public boolean isDestroyed() {
             return destroyed;
+        }
+
+        private synchronized ExtendedKey copy() {
+            checkNotDestroyed();
+            return new ExtendedKey(privateKey, chainCode, path, depth);
+        }
+
+        private void checkNotDestroyed() {
+            if (destroyed) {
+                throw new IllegalStateException("Extended key has been destroyed");
+            }
         }
 
         @Override

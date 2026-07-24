@@ -4,8 +4,8 @@ import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
 import io.github.superedison.web3.core.signer.SigningKey;
 import io.github.superedison.web3.crypto.util.SecureBytes;
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
+import org.bouncycastle.math.ec.rfc8032.Ed25519;
 
 /**
  * Ed25519 椭圆曲线签名器
@@ -27,7 +27,6 @@ public class Ed25519Signer implements SigningKey {
 
     private final byte[] privateKey;
     private final byte[] publicKey;
-    private Ed25519PrivateKeyParameters privateKeyParams;
     private volatile boolean destroyed = false;
 
     /**
@@ -38,9 +37,14 @@ public class Ed25519Signer implements SigningKey {
         if (privateKey == null || privateKey.length != 32) {
             throw new IllegalArgumentException("Private key must be 32 bytes");
         }
-        this.privateKey = SecureBytes.copy(privateKey);
-        this.privateKeyParams = new Ed25519PrivateKeyParameters(privateKey, 0);
-        this.publicKey = privateKeyParams.generatePublicKey().getEncoded();
+        byte[] privateKeyCopy = SecureBytes.copy(privateKey);
+        try {
+            this.privateKey = privateKeyCopy;
+            this.publicKey = derivePublicKey(privateKeyCopy);
+        } catch (RuntimeException | Error e) {
+            SecureBytes.secureWipe(privateKeyCopy);
+            throw e;
+        }
     }
 
     /**
@@ -49,8 +53,12 @@ public class Ed25519Signer implements SigningKey {
      * @return 32字节公钥
      */
     public static byte[] derivePublicKey(byte[] privateKey) {
-        Ed25519PrivateKeyParameters privParams = new Ed25519PrivateKeyParameters(privateKey, 0);
-        return privParams.generatePublicKey().getEncoded();
+        if (privateKey == null || privateKey.length != 32) {
+            throw new IllegalArgumentException("Private key must be 32 bytes");
+        }
+        byte[] publicKey = new byte[Ed25519.PUBLIC_KEY_SIZE];
+        Ed25519.generatePublicKey(privateKey, 0, publicKey, 0);
+        return publicKey;
     }
 
     /**
@@ -62,14 +70,9 @@ public class Ed25519Signer implements SigningKey {
      * @throws IllegalStateException 如果签名器已销毁
      */
     @Override
-    public Signature sign(byte[] message) {
+    public synchronized Signature sign(byte[] message) {
         checkNotDestroyed();
-        org.bouncycastle.crypto.signers.Ed25519Signer signer =
-                new org.bouncycastle.crypto.signers.Ed25519Signer();
-        signer.init(true, privateKeyParams);
-        signer.update(message, 0, message.length);
-        byte[] signatureBytes = signer.generateSignature();
-        return new Ed25519Signature(signatureBytes);
+        return new Ed25519Signature(signRawInternal(message));
     }
 
     /**
@@ -77,13 +80,18 @@ public class Ed25519Signer implements SigningKey {
      * @param message 任意长度消息
      * @return 64字节签名
      */
-    public byte[] signRaw(byte[] message) {
+    public synchronized byte[] signRaw(byte[] message) {
         checkNotDestroyed();
-        org.bouncycastle.crypto.signers.Ed25519Signer signer =
-                new org.bouncycastle.crypto.signers.Ed25519Signer();
-        signer.init(true, privateKeyParams);
-        signer.update(message, 0, message.length);
-        return signer.generateSignature();
+        return signRawInternal(message);
+    }
+
+    private byte[] signRawInternal(byte[] message) {
+        if (message == null) {
+            throw new IllegalArgumentException("Message cannot be null");
+        }
+        byte[] signature = new byte[Ed25519.SIGNATURE_SIZE];
+        Ed25519.sign(privateKey, 0, publicKey, 0, message, 0, message.length, signature, 0);
+        return signature;
     }
 
     private void checkNotDestroyed() {
@@ -122,7 +130,8 @@ public class Ed25519Signer implements SigningKey {
     /**
      * 使用当前密钥对验证签名
      */
-    public boolean verify(byte[] message, byte[] signature) {
+    public synchronized boolean verify(byte[] message, byte[] signature) {
+        checkNotDestroyed();
         return verify(message, signature, publicKey);
     }
 
@@ -130,7 +139,7 @@ public class Ed25519Signer implements SigningKey {
      * 获取公钥（32字节）
      */
     @Override
-    public byte[] getPublicKey() {
+    public synchronized byte[] getPublicKey() {
         checkNotDestroyed();
         return SecureBytes.copy(publicKey);
     }
@@ -148,17 +157,9 @@ public class Ed25519Signer implements SigningKey {
      * 调用后私钥将被清零，SigningKey 不可再使用
      */
     @Override
-    public void destroy() {
+    public synchronized void destroy() {
         if (!destroyed) {
             SecureBytes.secureWipe(privateKey);
-            // 尝试擦除 BouncyCastle 内部密钥副本
-            try {
-                byte[] encoded = privateKeyParams.getEncoded();
-                SecureBytes.secureWipe(encoded);
-            } catch (Exception ignored) {
-                // BC 可能不允许访问内部状态
-            }
-            privateKeyParams = null;
             destroyed = true;
         }
     }

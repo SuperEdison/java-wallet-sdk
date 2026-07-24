@@ -86,6 +86,31 @@ class Secp256k1SignerTest {
             assertThatThrownBy(() -> new Secp256k1Signer(emptyKey))
                     .isInstanceOf(IllegalArgumentException.class);
         }
+
+        @Test
+        @DisplayName("zero private scalar should be rejected")
+        void zeroPrivateScalar() {
+            byte[] zero = new byte[32];
+
+            assertThatThrownBy(() -> new Secp256k1Signer(zero))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("[1, n - 1]");
+            assertThatThrownBy(() -> Secp256k1Signer.derivePublicKey(zero, true))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("private scalar equal to the curve order should be rejected")
+        void curveOrderPrivateScalar() {
+            byte[] curveOrder = hexToBytes(
+                    "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+
+            assertThatThrownBy(() -> new Secp256k1Signer(curveOrder))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("[1, n - 1]");
+            assertThatThrownBy(() -> Secp256k1Signer.derivePublicKey(curveOrder, false))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Nested
@@ -277,6 +302,20 @@ class Secp256k1SignerTest {
         }
 
         @Test
+        @DisplayName("64-byte raw public keys should verify without changing standard encodings")
+        void verifyWithRawPublicKey() {
+            signer = new Secp256k1Signer(TEST_PRIVATE_KEY);
+            byte[] messageHash = Keccak256.hash("raw public key");
+            var result = (Secp256k1Signer.Secp256k1Signature) signer.sign(messageHash);
+            byte[] rawPublicKey = Arrays.copyOfRange(signer.getPublicKey(), 1, 65);
+
+            assertThat(Secp256k1Signer.verify(
+                    messageHash, result.r(), result.s(), rawPublicKey)).isTrue();
+            assertThat(Secp256k1Signer.verify(
+                    messageHash, result.r(), result.s(), signer.getCompressedPublicKey())).isTrue();
+        }
+
+        @Test
         @DisplayName("错误消息应该验证失败")
         void verifyWithWrongMessage() {
             signer = new Secp256k1Signer(TEST_PRIVATE_KEY);
@@ -376,6 +415,24 @@ class Secp256k1SignerTest {
             recovered = Secp256k1Signer.recoverPublicKey(
                     messageHash, result.r(), result.s(), 4);
             assertThat(recovered).isNull();
+        }
+
+        @Test
+        @DisplayName("malformed recovery inputs should return null instead of throwing")
+        void malformedInputsReturnNull() {
+            byte[] messageHash = Keccak256.hash("malformed recovery");
+            byte[] one = new byte[32];
+            one[31] = 1;
+            byte[] zero = new byte[32];
+            byte[] curveOrder = hexToBytes(
+                    "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+
+            assertThat(Secp256k1Signer.recoverPublicKey(messageHash, zero, one, 0)).isNull();
+            assertThat(Secp256k1Signer.recoverPublicKey(messageHash, curveOrder, one, 0)).isNull();
+            assertThat(Secp256k1Signer.recoverPublicKey(messageHash, one, zero, 0)).isNull();
+            assertThat(Secp256k1Signer.recoverPublicKey(messageHash, (byte[]) null, one, 0)).isNull();
+            assertThat(Secp256k1Signer.recoverPublicKey(
+                    new byte[31], BigInteger.ONE, BigInteger.ONE, 0)).isNull();
         }
     }
 

@@ -1,8 +1,9 @@
 package io.github.superedison.web3.chain.evm.internal;
 
+import io.github.superedison.web3.chain.spi.signing.Secp256k1SignatureValidator;
+import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
-import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -27,20 +28,48 @@ public final class EvmSignature implements Signature {
      * 从 recoveryId 创建 (recoveryId: 0/1 -> v: 27/28)
      */
     public static EvmSignature fromRecoveryId(byte[] r, byte[] s, int recoveryId) {
-        return new EvmSignature(padTo32(r), padTo32(s), Secp256k1VNormalizer.toLegacyV(recoveryId));
+        if (recoveryId < 0 || recoveryId > 1) {
+            throw new IllegalArgumentException("EVM compact signatures require recoveryId 0 or 1");
+        }
+        byte[] normalizedR = padTo32("r", r);
+        byte[] normalizedS = padTo32("s", s);
+        Secp256k1SignatureValidator.requireCanonical(normalizedR, normalizedS);
+        return new EvmSignature(
+                normalizedR, normalizedS, Secp256k1VNormalizer.toLegacyV(recoveryId));
     }
 
     /**
      * 从紧凑格式解析 (65 字节)
      */
     public static EvmSignature fromCompact(byte[] signature) {
-        if (signature.length != 65) {
+        if (signature == null || signature.length != 65) {
             throw new IllegalArgumentException("Signature must be 65 bytes");
         }
         byte[] r = Arrays.copyOfRange(signature, 0, 32);
         byte[] s = Arrays.copyOfRange(signature, 32, 64);
+        Secp256k1SignatureValidator.requireCanonical(r, s);
         long v = signature[64] & 0xFF;
         return new EvmSignature(r, s, v);
+    }
+
+    /** 解析 SigningKey 的内部输出；接受 recovery id，输出仍规范化为 legacy v。 */
+    static EvmSignature fromSignerCompact(byte[] signature) {
+        if (signature == null || signature.length != 65) {
+            throw new IllegalArgumentException("Signature must be 65 bytes");
+        }
+        int rawV = signature[64] & 0xFF;
+        int recoveryId;
+        if (rawV <= 1) {
+            recoveryId = rawV;
+        } else if (rawV == 27 || rawV == 28) {
+            recoveryId = rawV - 27;
+        } else {
+            throw new IllegalArgumentException("SigningKey signature v must be a recovery id");
+        }
+        return fromRecoveryId(
+                Arrays.copyOfRange(signature, 0, 32),
+                Arrays.copyOfRange(signature, 32, 64),
+                recoveryId);
     }
 
     @Override
@@ -89,9 +118,17 @@ public final class EvmSignature implements Signature {
         return new EvmSignature(r, s, newV);
     }
 
-    private static byte[] padTo32(byte[] bytes) {
+    private static byte[] padTo32(String name, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException(name + " must not be null or empty");
+        }
         if (bytes.length == 32) return Arrays.copyOf(bytes, 32);
         if (bytes.length > 32) {
+            for (int i = 0; i < bytes.length - 32; i++) {
+                if (bytes[i] != 0) {
+                    throw new IllegalArgumentException(name + " does not fit in 32 bytes");
+                }
+            }
             return Arrays.copyOfRange(bytes, bytes.length - 32, bytes.length);
         }
         byte[] padded = new byte[32];

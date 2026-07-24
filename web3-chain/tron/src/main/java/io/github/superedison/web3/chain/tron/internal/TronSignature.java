@@ -1,8 +1,9 @@
 package io.github.superedison.web3.chain.tron.internal;
 
+import io.github.superedison.web3.chain.spi.signing.Secp256k1SignatureValidator;
+import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 import io.github.superedison.web3.core.signer.Signature;
 import io.github.superedison.web3.core.signer.SignatureScheme;
-import io.github.superedison.web3.chain.spi.signing.Secp256k1VNormalizer;
 
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -27,7 +28,7 @@ public final class TronSignature implements Signature {
      * 从恢复 ID 创建签名
      * @param r 32 字节 r 值
      * @param s 32 字节 s 值
-     * @param recoveryId 恢复 ID (0-3)
+     * @param recoveryId recovery ID (0/1)；TRON compact v 无法编码 2/3
      * @return TronSignature 实例
      */
     public static TronSignature fromRecoveryId(byte[] r, byte[] s, int recoveryId) {
@@ -37,10 +38,11 @@ public final class TronSignature implements Signature {
         if (s == null || s.length != 32) {
             throw new IllegalArgumentException("s must be 32 bytes");
         }
-        if (recoveryId < 0 || recoveryId > 3) {
-            throw new IllegalArgumentException("recoveryId must be 0-3");
+        if (recoveryId < 0 || recoveryId > 1) {
+            throw new IllegalArgumentException("TRON compact signatures require recoveryId 0 or 1");
         }
-        // TRON 统一使用 27/28，若输入 2/3 则按奇偶折叠到 0/1
+        Secp256k1SignatureValidator.requireCanonical(r, s);
+        // TRON compact 签名统一使用 27/28。
         int v = Secp256k1VNormalizer.toLegacyV(recoveryId);
         return new TronSignature(Arrays.copyOf(r, 32), Arrays.copyOf(s, 32), v);
     }
@@ -56,8 +58,9 @@ public final class TronSignature implements Signature {
         }
         byte[] r = Arrays.copyOfRange(signature, 0, 32);
         byte[] s = Arrays.copyOfRange(signature, 32, 64);
+        Secp256k1SignatureValidator.requireCanonical(r, s);
         int rawV = signature[64] & 0xFF;
-        // 统一归一化到 TRON 标准 v (27/28)
+        // 通用 parser 保留跨语言兼容语义；协议入口负责限制原始 compact v。
         int v = Secp256k1VNormalizer.toLegacyV(rawV);
         return new TronSignature(r, s, v);
     }

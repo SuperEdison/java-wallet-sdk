@@ -58,9 +58,19 @@ public class Secp256k1Signer implements SigningKey {
         if (privateKey == null || privateKey.length != 32) {
             throw new IllegalArgumentException("Private key must be 32 bytes");
         }
-        this.privateKey = SecureBytes.copy(privateKey);
-        this.publicKey = derivePublicKey(privateKey, false);
-        this.compressedPublicKey = derivePublicKey(privateKey, true);
+
+        byte[] privateKeyCopy = SecureBytes.copy(privateKey);
+        try {
+            BigInteger privateScalar = requireValidPrivateKey(privateKeyCopy);
+            ECPoint publicPoint = new FixedPointCombMultiplier().multiply(CURVE.getG(), privateScalar);
+
+            this.privateKey = privateKeyCopy;
+            this.publicKey = publicPoint.getEncoded(false);
+            this.compressedPublicKey = publicPoint.getEncoded(true);
+        } catch (RuntimeException | Error e) {
+            SecureBytes.secureWipe(privateKeyCopy);
+            throw e;
+        }
     }
 
     /**
@@ -70,9 +80,21 @@ public class Secp256k1Signer implements SigningKey {
      * @return 公钥字节数组
      */
     public static byte[] derivePublicKey(byte[] privateKey, boolean compressed) {
-        BigInteger privKey = new BigInteger(1, privateKey);
+        BigInteger privKey = requireValidPrivateKey(privateKey);
         ECPoint point = new FixedPointCombMultiplier().multiply(CURVE.getG(), privKey);
         return point.getEncoded(compressed);
+    }
+
+    private static BigInteger requireValidPrivateKey(byte[] privateKey) {
+        if (privateKey == null || privateKey.length != 32) {
+            throw new IllegalArgumentException("Private key must be 32 bytes");
+        }
+
+        BigInteger privateScalar = new BigInteger(1, privateKey);
+        if (privateScalar.signum() == 0 || privateScalar.compareTo(CURVE.getN()) >= 0) {
+            throw new IllegalArgumentException("Private key must be in the range [1, n - 1]");
+        }
+        return privateScalar;
     }
 
     /**
@@ -82,7 +104,7 @@ public class Secp256k1Signer implements SigningKey {
      * @throws IllegalStateException 如果签名器已销毁
      */
     @Override
-    public Signature sign(byte[] messageHash) {
+    public synchronized Signature sign(byte[] messageHash) {
         checkNotDestroyed();
         if (messageHash == null || messageHash.length != 32) {
             throw new IllegalArgumentException("Message hash must be 32 bytes");
@@ -140,7 +162,7 @@ public class Secp256k1Signer implements SigningKey {
     public static boolean verify(byte[] messageHash, byte[] r, byte[] s, byte[] publicKey) {
         try {
             ECDSASigner signer = new ECDSASigner();
-            ECPoint point = CURVE.getCurve().decodePoint(publicKey);
+            ECPoint point = CURVE.getCurve().decodePoint(normalizePublicKey(publicKey));
             ECPublicKeyParameters pubKeyParams = new ECPublicKeyParameters(point, CURVE);
             signer.init(false, pubKeyParams);
 
@@ -154,6 +176,20 @@ public class Secp256k1Signer implements SigningKey {
     }
 
     /**
+     * 归一化公钥编码：64 字节裸公钥 (X||Y) 补上 0x04 前缀成为标准非压缩编码，
+     * 使 {@link #verify} 能接受 EVM/TRON 生态常见的 64 字节公钥；65/33 字节保持不变。
+     */
+    private static byte[] normalizePublicKey(byte[] publicKey) {
+        if (publicKey != null && publicKey.length == 64) {
+            byte[] uncompressed = new byte[65];
+            uncompressed[0] = 0x04;
+            System.arraycopy(publicKey, 0, uncompressed, 1, 64);
+            return uncompressed;
+        }
+        return publicKey;
+    }
+
+    /**
      * 从签名恢复公钥
      * @param messageHash 消息哈希
      * @param r 签名 r
@@ -162,18 +198,30 @@ public class Secp256k1Signer implements SigningKey {
      * @return 公钥字节数组，失败返回 null
      */
     public static byte[] recoverPublicKey(byte[] messageHash, byte[] r, byte[] s, int recId) {
-        return recoverPublicKey(messageHash, new BigInteger(1, r), new BigInteger(1, s), recId);
+        if (r == null || s == null) {
+            return null;
+        }
+        try {
+            return recoverPublicKey(messageHash, new BigInteger(1, r), new BigInteger(1, s), recId);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**
      * 从签名恢复公钥
      */
     public static byte[] recoverPublicKey(byte[] messageHash, BigInteger r, BigInteger s, int recId) {
-        if (recId < 0 || recId > 3) {
+        if (messageHash == null || messageHash.length != 32 || r == null || s == null
+                || recId < 0 || recId > 3) {
             return null;
         }
 
         BigInteger n = CURVE.getN();
+        if (r.signum() <= 0 || r.compareTo(n) >= 0 || s.signum() <= 0 || s.compareTo(n) >= 0) {
+            return null;
+        }
+
         BigInteger i = BigInteger.valueOf((long) recId / 2);
         BigInteger x = r.add(i.multiply(n));
 
@@ -193,7 +241,7 @@ public class Secp256k1Signer implements SigningKey {
         BigInteger eInvrInv = rInv.multiply(eInv).mod(n);
 
         ECPoint q = sumOfTwoMultiplies(CURVE.getG(), eInvrInv, R, srInv);
-        return q.getEncoded(false);
+        return q.isInfinity() ? null : q.getEncoded(false);
     }
 
     private static ECPoint decompressPoint(BigInteger x, boolean yBit) {
@@ -223,7 +271,7 @@ public class Secp256k1Signer implements SigningKey {
      * 获取公钥（非压缩，65字节）
      */
     @Override
-    public byte[] getPublicKey() {
+    public synchronized byte[] getPublicKey() {
         checkNotDestroyed();
         return SecureBytes.copy(publicKey);
     }
@@ -231,7 +279,7 @@ public class Secp256k1Signer implements SigningKey {
     /**
      * 获取压缩公钥（33字节）
      */
-    public byte[] getCompressedPublicKey() {
+    public synchronized byte[] getCompressedPublicKey() {
         checkNotDestroyed();
         return SecureBytes.copy(compressedPublicKey);
     }
@@ -249,7 +297,7 @@ public class Secp256k1Signer implements SigningKey {
      * 调用后私钥将被清零，SigningKey 不可再使用
      */
     @Override
-    public void destroy() {
+    public synchronized void destroy() {
         if (!destroyed) {
             SecureBytes.secureWipe(privateKey);
             destroyed = true;

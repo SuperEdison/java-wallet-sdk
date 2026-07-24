@@ -31,12 +31,7 @@ public final class EvmTransactionSigner implements TransactionSigner<EvmRawTrans
         byte[] hash = hasher.hash(encodedForSigning);
 
         Signature sig = key.sign(hash);
-        byte[] sigBytes = sig.bytes();
-        if (sigBytes.length != 65) {
-            throw new IllegalArgumentException("Signature must be 65 bytes for EVM");
-        }
-
-        EvmSignature evmSig = EvmSignature.fromCompact(sigBytes).toEip155(tx.getChainId());
+        EvmSignature evmSig = EvmSignature.fromSignerCompact(sig.bytes()).toEip155(tx.getChainId());
         byte[] signedBytes = encoder.encodeSigned(tx, evmSig);
         byte[] txHash = hasher.hash(signedBytes);
 

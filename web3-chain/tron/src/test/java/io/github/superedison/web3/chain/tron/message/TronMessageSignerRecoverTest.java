@@ -1,13 +1,20 @@
 package io.github.superedison.web3.chain.tron.message;
 
 import io.github.superedison.web3.chain.tron.address.TronAddress;
+import io.github.superedison.web3.chain.tron.internal.TronSignature;
+import io.github.superedison.web3.chain.tron.testutil.HighSSignatures;
 import io.github.superedison.web3.core.signer.Signature;
+import io.github.superedison.web3.core.signer.SigningKey;
 import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("TRON 签名地址反算 (ecrecover)")
 class TronMessageSignerRecoverTest {
@@ -18,6 +25,47 @@ class TronMessageSignerRecoverTest {
             (byte) 0xbb, (byte) 0xa1, (byte) 0x09, (byte) 0xb1, (byte) 0x2b, (byte) 0x07, (byte) 0x0d, (byte) 0x14,
             (byte) 0x9d, (byte) 0x6f, (byte) 0xb5, (byte) 0x52, (byte) 0xae, (byte) 0xa9, (byte) 0x16, (byte) 0x82
     };
+
+    @Nested
+    @DisplayName("TronWeb signMessageV2 兼容向量")
+    class TronWebV2Compatibility {
+
+        private final byte[] message = "hello".getBytes(StandardCharsets.UTF_8);
+
+        @Test
+        @DisplayName("预映像只包含一个 0x19 前缀")
+        void preimageMatchesTronWeb() {
+            assertThat(TronMessageSigner.messagePreimage(message)).isEqualTo(HexFormat.of().parseHex(
+                    "1954524f4e205369676e6564204d6573736167653a0a3568656c6c6f"));
+        }
+
+        @Test
+        @DisplayName("hash 与 TronWeb 6.4.0 hashMessage 固定向量一致")
+        void hashMatchesTronWeb() {
+            assertThat(TronMessageSigner.hashMessage(message)).isEqualTo(HexFormat.of().parseHex(
+                    "a07d8e5b946cc0416662f5420751673680809e5f10313e20c7c5badb0ef4226d"));
+        }
+
+        @Test
+        @DisplayName("String 重载拒绝未配对 surrogate，不产生 UTF-8 替换碰撞")
+        void rejectsMalformedUtf16() {
+            String loneHigh = String.valueOf((char) 0xD800);
+            String loneLow = String.valueOf((char) 0xDC00);
+
+            assertThatThrownBy(() -> TronMessageSigner.hashMessage(loneHigh))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> TronMessageSigner.hashMessage(loneLow))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("合法 surrogate pair 与 UTF-8 byte[] 重载一致")
+        void validSurrogatePairMatchesBytes() {
+            String emoji = new String(Character.toChars(0x1F600));
+            assertThat(TronMessageSigner.hashMessage(emoji))
+                    .isEqualTo(TronMessageSigner.hashMessage(emoji.getBytes(StandardCharsets.UTF_8)));
+        }
+    }
 
     @Nested
     @DisplayName("TronMessageSigner.recoverAddress")
@@ -51,6 +99,71 @@ class TronMessageSignerRecoverTest {
                 assertThat(fromString).isEqualTo(fromBytes);
             }
         }
+
+        @Test
+        @DisplayName("拒绝可恢复同一地址的 high-S 紧凑签名")
+        void rejectsHighSCompactSignature() {
+            try (Secp256k1Signer signer = new Secp256k1Signer(PRIVATE_KEY)) {
+                String message = "reject malleable signature";
+                Signature lowS = TronMessageSigner.signMessage(message, signer);
+                byte[] highS = HighSSignatures.fromCompact(lowS.bytes());
+
+                assertThatThrownBy(() -> TronMessageSigner.recoverAddress(message, highS))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("low-S");
+                assertThat(TronMessageSigner.verifyMessageAddress(
+                        message, highS, TronAddress.fromPublicKey(signer.getPublicKey()))).isFalse();
+                assertThat(TronMessageSigner.verifyMessage(
+                        message, HighSSignatures.asSignature(highS), signer.getPublicKey())).isFalse();
+            }
+        }
+
+        @Test
+        @DisplayName("消息签名拒绝 recovery-id 与 EIP-155 v 别名")
+        void rejectsNonLegacyVAliases() {
+            try (Secp256k1Signer signer = new Secp256k1Signer(PRIVATE_KEY)) {
+                String message = "canonical v";
+                byte[] lowS = TronMessageSigner.signMessage(message, signer).bytes();
+                int recoveryId = (lowS[64] & 0xff) - 27;
+                byte[] recoveryAlias = lowS.clone();
+                recoveryAlias[64] = (byte) recoveryId;
+                byte[] eip155Alias = lowS.clone();
+                eip155Alias[64] = (byte) (37 + recoveryId);
+
+                assertThatThrownBy(() -> TronMessageSigner.recoverAddress(message, recoveryAlias))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("27 or 28");
+                assertThatThrownBy(() -> TronMessageSigner.recoverAddress(message, eip155Alias))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("27 or 28");
+                assertThat(TronMessageSigner.verifyMessage(
+                        message, HighSSignatures.asSignature(recoveryAlias), signer.getPublicKey())).isFalse();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("自定义 SigningKey 返回 high-S 时签名入口拒绝")
+    void rejectsHighSFromSigningKey() {
+        try (SigningKey signer = HighSSignatures.wrapping(new Secp256k1Signer(PRIVATE_KEY))) {
+            assertThatThrownBy(() -> TronMessageSigner.signMessage("high-s signer", signer))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("low-S");
+        }
+    }
+
+    @Test
+    @DisplayName("fromRecoveryId 拒绝 compact v 无法表达的 2/3")
+    void rejectsUnrepresentableRecoveryIds() {
+        byte[] one = new byte[32];
+        one[31] = 1;
+
+        assertThatThrownBy(() -> TronSignature.fromRecoveryId(one, one, 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("0 or 1");
+        assertThatThrownBy(() -> TronSignature.fromRecoveryId(one, one, 3))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("0 or 1");
     }
 
     @Nested

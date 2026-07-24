@@ -1,11 +1,17 @@
 package io.github.superedison.web3.chain.evm.message;
 
 import io.github.superedison.web3.chain.evm.address.EvmAddress;
+import io.github.superedison.web3.chain.evm.internal.EvmSignature;
+import io.github.superedison.web3.chain.evm.testutil.HighSSignatures;
 import io.github.superedison.web3.core.signer.Signature;
+import io.github.superedison.web3.core.signer.SigningKey;
 import io.github.superedison.web3.crypto.ecc.Secp256k1Signer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,6 +57,56 @@ class EvmMessageSignerRecoverTest {
 
                 assertThat(fromString).isEqualTo(fromBytes);
             }
+        }
+
+        @Test
+        @DisplayName("拒绝可恢复同一地址的 high-S 紧凑签名")
+        void rejectsHighSCompactSignature() {
+            try (Secp256k1Signer signer = new Secp256k1Signer(PRIVATE_KEY)) {
+                String message = "reject malleable signature";
+                Signature lowS = EvmMessageSigner.signMessage(message, signer);
+                byte[] highS = HighSSignatures.fromCompact(lowS.bytes());
+
+                assertThatThrownBy(() -> EvmMessageSigner.recoverAddress(message, highS))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("low-S");
+                assertThat(EvmMessageSigner.verifyMessageAddress(
+                        message, highS, EvmAddress.fromPublicKey(signer.getPublicKey()))).isFalse();
+            }
+        }
+
+        @Test
+        @DisplayName("消息签名拒绝 recovery-id 与 EIP-155 v 别名")
+        void rejectsNonLegacyVAliases() {
+            try (Secp256k1Signer signer = new Secp256k1Signer(PRIVATE_KEY)) {
+                String message = "canonical v";
+                byte[] lowS = EvmMessageSigner.signMessage(message, signer).bytes();
+                int recoveryId = (lowS[64] & 0xff) - 27;
+                byte[] recoveryAlias = lowS.clone();
+                recoveryAlias[64] = (byte) recoveryId;
+                byte[] eip155Alias = lowS.clone();
+                eip155Alias[64] = (byte) (37 + recoveryId);
+
+                assertThatThrownBy(() -> EvmMessageSigner.recoverAddress(message, recoveryAlias))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("27 or 28");
+                assertThatThrownBy(() -> EvmMessageSigner.recoverAddress(message, eip155Alias))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("27 or 28");
+                assertThat(EvmMessageSigner.verifyMessage(
+                        message.getBytes(StandardCharsets.UTF_8),
+                        EvmSignature.fromCompact(recoveryAlias), signer.getPublicKey())).isFalse();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("自定义 SigningKey 返回 high-S 时签名入口拒绝")
+    void rejectsHighSFromSigningKey() {
+        try (SigningKey signer = HighSSignatures.wrapping(new Secp256k1Signer(PRIVATE_KEY))) {
+            assertThatThrownBy(() -> EvmMessageSigner.signMessage("high-s signer", signer))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("low-S");
         }
     }
 
@@ -121,9 +177,9 @@ class EvmMessageSignerRecoverTest {
 
                 byte[] hash = new byte[32];
                 for (int i = 0; i < 32; i++) hash[i] = (byte) i;
-                Signature sig = signer.sign(hash);
-
-                Signature evmSig = io.github.superedison.web3.chain.evm.internal.EvmSignature.fromCompact(sig.bytes());
+                Secp256k1Signer.Secp256k1Signature sig =
+                        (Secp256k1Signer.Secp256k1Signature) signer.sign(hash);
+                Signature evmSig = EvmSignature.fromRecoveryId(sig.r(), sig.s(), sig.v());
                 EvmAddress recovered = EvmAddress.recover(hash, evmSig.bytes());
 
                 assertThat(recovered).isEqualTo(expected);
@@ -143,6 +199,53 @@ class EvmMessageSignerRecoverTest {
         void rejectsWrongSignatureLength() {
             assertThatThrownBy(() -> EvmAddress.recover(new byte[32], new byte[10]))
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("fromRecoveryId 不截断超长非零标量")
+        void rejectsOversizedScalarInsteadOfTruncating() {
+            byte[] oversizedR = new byte[33];
+            oversizedR[0] = 1;
+            byte[] s = new byte[32];
+            s[31] = 1;
+
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(oversizedR, s, 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("does not fit");
+        }
+
+        @Test
+        @DisplayName("fromRecoveryId 拒绝零标量与 r 等于曲线阶")
+        void rejectsOutOfRangeScalars() {
+            byte[] zero = new byte[32];
+            byte[] one = new byte[32];
+            one[31] = 1;
+            byte[] curveOrder = HexFormat.of().parseHex(
+                    "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(zero, one, 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("r must be");
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(curveOrder, one, 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("r must be");
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(one, zero, 0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("s must be");
+        }
+
+        @Test
+        @DisplayName("fromRecoveryId 拒绝 compact v 无法表达的 2/3")
+        void rejectsUnrepresentableRecoveryIds() {
+            byte[] one = new byte[32];
+            one[31] = 1;
+
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(one, one, 2))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("0 or 1");
+            assertThatThrownBy(() -> EvmSignature.fromRecoveryId(one, one, 3))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("0 or 1");
         }
     }
 }

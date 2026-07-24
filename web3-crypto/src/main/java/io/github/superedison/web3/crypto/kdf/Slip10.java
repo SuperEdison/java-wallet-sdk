@@ -26,16 +26,23 @@ public final class Slip10 {
     * 从种子生成主密钥
     */
     public static ExtendedKey masterKeyFromSeed(byte[] seed, Curve curve) {
+        if (curve == null) {
+            throw new IllegalArgumentException("Curve cannot be null");
+        }
         String key = switch (curve) {
             case ED25519 -> ED25519_SEED_KEY;
         };
         byte[] i = hmacSha512(key.getBytes(StandardCharsets.UTF_8), seed);
+        byte[] kL = null;
+        byte[] chainCode = null;
         try {
-            byte[] kL = Arrays.copyOfRange(i, 0, 32);
-            byte[] chainCode = Arrays.copyOfRange(i, 32, 64);
+            kL = Arrays.copyOfRange(i, 0, 32);
+            chainCode = Arrays.copyOfRange(i, 32, 64);
             return new ExtendedKey(curve, kL, chainCode, new int[0], 0);
         } finally {
             SecureBytes.secureWipe(i);
+            SecureBytes.secureWipe(kL);
+            SecureBytes.secureWipe(chainCode);
         }
     }
 
@@ -43,28 +50,40 @@ public final class Slip10 {
      * 派生子密钥（只支持 Hardened，index 必须带 0x80000000）
      */
     public static ExtendedKey deriveChild(ExtendedKey parent, int index) {
-        if ((index & 0x80000000) == 0) {
-            throw new IllegalArgumentException("SLIP-0010 Ed25519 only supports hardened derivation");
+        if (parent == null) {
+            throw new IllegalArgumentException("Parent key cannot be null");
         }
-        byte[] data = new byte[1 + 32 + 4];
-        try {
-            data[0] = 0x00;
-            System.arraycopy(parent.getKey(), 0, data, 1, 32);
-            ByteBuffer.wrap(data, 33, 4).putInt(index);
 
-            byte[] i = hmacSha512(parent.getChainCode(), data);
-            try {
-                byte[] childKey = Arrays.copyOfRange(i, 0, 32);
-                byte[] childChainCode = Arrays.copyOfRange(i, 32, 64);
+        synchronized (parent) {
+            parent.checkNotDestroyed();
 
-                int[] newPath = Arrays.copyOf(parent.path(), parent.path().length + 1);
-                newPath[newPath.length - 1] = index;
-                return new ExtendedKey(parent.getCurve(), childKey, childChainCode, newPath, parent.depth() + 1);
-            } finally {
-                SecureBytes.secureWipe(i);
+            if ((index & 0x80000000) == 0) {
+                throw new IllegalArgumentException("SLIP-0010 Ed25519 only supports hardened derivation");
             }
-        } finally {
-            SecureBytes.secureWipe(data);
+            byte[] data = new byte[1 + 32 + 4];
+            try {
+                data[0] = 0x00;
+                System.arraycopy(parent.key, 0, data, 1, 32);
+                ByteBuffer.wrap(data, 33, 4).putInt(index);
+
+                byte[] i = hmacSha512(parent.chainCode, data);
+                byte[] childKey = null;
+                byte[] childChainCode = null;
+                try {
+                    childKey = Arrays.copyOfRange(i, 0, 32);
+                    childChainCode = Arrays.copyOfRange(i, 32, 64);
+
+                    int[] newPath = Arrays.copyOf(parent.path, parent.path.length + 1);
+                    newPath[newPath.length - 1] = index;
+                    return new ExtendedKey(parent.curve, childKey, childChainCode, newPath, parent.depth + 1);
+                } finally {
+                    SecureBytes.secureWipe(i);
+                    SecureBytes.secureWipe(childKey);
+                    SecureBytes.secureWipe(childChainCode);
+                }
+            } finally {
+                SecureBytes.secureWipe(data);
+            }
         }
     }
 
@@ -72,16 +91,39 @@ public final class Slip10 {
      * 按路径派生，例如 m/44'/501'/0'/0'
      */
     public static ExtendedKey derivePath(ExtendedKey master, String path) {
+        if (master == null) {
+            throw new IllegalArgumentException("Master key cannot be null");
+        }
+        master.checkNotDestroyed();
+
         int[] indices = Bip32.parsePath(path); // 复用解析逻辑
-        ExtendedKey current = master;
         for (int index : indices) {
-            ExtendedKey next = deriveChild(current, index);
+            if ((index & 0x80000000) == 0) {
+                throw new IllegalArgumentException("SLIP-0010 Ed25519 only supports hardened derivation");
+            }
+        }
+
+        // 根路径不派生子级，但返回独立对象，避免销毁结果时连带销毁 master。
+        if (indices.length == 0) {
+            return master.copy();
+        }
+
+        ExtendedKey current = master;
+        try {
+            for (int index : indices) {
+                ExtendedKey next = deriveChild(current, index);
+                if (current != master) {
+                    current.destroy();
+                }
+                current = next;
+            }
+            return current;
+        } catch (RuntimeException | Error e) {
             if (current != master) {
                 current.destroy();
             }
-            current = next;
+            throw e;
         }
-        return current;
     }
 
     private static byte[] hmacSha512(byte[] key, byte[] data) {
@@ -103,14 +145,32 @@ public final class Slip10 {
         private final byte[] chainCode;
         private final int[] path;
         private final int depth;
-        private boolean destroyed = false;
+        private volatile boolean destroyed = false;
 
         public ExtendedKey(Curve curve, byte[] key, byte[] chainCode, int[] path, int depth) {
-            this.curve = curve;
-            this.key = SecureBytes.copy(key);
-            this.chainCode = SecureBytes.copy(chainCode);
-            this.path = path == null ? new int[0] : Arrays.copyOf(path, path.length);
-            this.depth = depth;
+            if (curve == null) {
+                throw new IllegalArgumentException("Curve cannot be null");
+            }
+            if (key == null || key.length != 32) {
+                throw new IllegalArgumentException("Private key must be 32 bytes");
+            }
+            if (chainCode == null || chainCode.length != 32) {
+                throw new IllegalArgumentException("Chain code must be 32 bytes");
+            }
+
+            byte[] keyCopy = SecureBytes.copy(key);
+            byte[] chainCodeCopy = SecureBytes.copy(chainCode);
+            try {
+                this.curve = curve;
+                this.key = keyCopy;
+                this.chainCode = chainCodeCopy;
+                this.path = path == null ? new int[0] : Arrays.copyOf(path, path.length);
+                this.depth = depth;
+            } catch (RuntimeException | Error e) {
+                SecureBytes.secureWipe(keyCopy);
+                SecureBytes.secureWipe(chainCodeCopy);
+                throw e;
+            }
         }
 
         public Curve getCurve() {
@@ -120,14 +180,16 @@ public final class Slip10 {
         /**
          * 返回私钥 seed（32 字节，副本）
          */
-        public byte[] getKey() {
+        public synchronized byte[] getKey() {
+            checkNotDestroyed();
             return SecureBytes.copy(key);
         }
 
         /**
          * 链码（副本）
          */
-        public byte[] getChainCode() {
+        public synchronized byte[] getChainCode() {
+            checkNotDestroyed();
             return SecureBytes.copy(chainCode);
         }
 
@@ -146,10 +208,12 @@ public final class Slip10 {
             return Bip32.indicesToPath(path);
         }
 
-        public void destroy() {
-            SecureBytes.secureWipe(key);
-            SecureBytes.secureWipe(chainCode);
-            destroyed = true;
+        public synchronized void destroy() {
+            if (!destroyed) {
+                SecureBytes.secureWipe(key);
+                SecureBytes.secureWipe(chainCode);
+                destroyed = true;
+            }
         }
 
         @Override
@@ -159,6 +223,17 @@ public final class Slip10 {
 
         public boolean isDestroyed() {
             return destroyed;
+        }
+
+        private synchronized ExtendedKey copy() {
+            checkNotDestroyed();
+            return new ExtendedKey(curve, key, chainCode, path, depth);
+        }
+
+        private void checkNotDestroyed() {
+            if (destroyed) {
+                throw new IllegalStateException("Extended key has been destroyed");
+            }
         }
 
         @Override

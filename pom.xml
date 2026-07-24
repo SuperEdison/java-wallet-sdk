@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.superedison</groupId>
     <artifactId>java-wallet-sdk</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <name>Java Version Web3 Wallet SDK</name>
     <description>Modular web3 wallet SDK for Java: core semantics, crypto primitives, chain adapters, and client
         facade.
@@ -57,7 +57,7 @@
             <dependency>
                 <groupId>org.bouncycastle</groupId>
                 <artifactId>bcprov-jdk18on</artifactId>
-                <version>1.83</version>
+                <version>1.84</version>
             </dependency>
 
             <!-- Test dependencies -->
